@@ -661,15 +661,28 @@ select.input { cursor: pointer; }
 .po-subrows-tip { font-size: 10px; color: var(--gray-4); }
 .po-subrows { display: flex; flex-direction: column; gap: 6px; }
 .po-subrow { background: var(--gray-1); border-radius: 8px; padding: 8px 9px; }
-.po-subrow-top { display: flex; align-items: center; gap: 5px; }
-.po-sr-dev { font-size: 12px !important; padding: 6px 6px !important; flex: 1.15; min-width: 0; }
-.po-sr-size, .po-sr-color { font-size: 12px !important; padding: 6px 6px !important; flex: 1; min-width: 0; }
-.po-sr-qty { font-size: 12px !important; padding: 6px 6px !important; width: 52px; flex-shrink: 0; text-align: center; }
+.po-subrow-top { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.po-sr-dev { font-size: 12px !important; padding: 6px 4px !important; flex: 0 0 74px; min-width: 0;
+  background: #e0f2fe !important; border: 1px solid #7dd3fc !important; color: #0369a1 !important; font-weight: 600; }
+.po-sr-dev.dev-empty { background: var(--white) !important; border-color: var(--gray-2) !important; color: var(--gray-5) !important; font-weight: 400; }
+.po-sr-addr { font-size: 12px !important; padding: 6px 4px !important; flex: 0 0 68px; min-width: 0;
+  background: #dcfce7 !important; border: 1px solid #86efac !important; color: #15803d !important; font-weight: 600; }
+.po-sr-size, .po-sr-color { font-size: 12px !important; padding: 6px 6px !important; flex: 1 1 46px; min-width: 42px; }
+.po-sr-qty { font-size: 12px !important; padding: 6px 4px !important; width: 46px; flex: 0 0 46px; text-align: center; }
 .po-sr-del { flex-shrink: 0; color: var(--gray-4); font-size: 16px; line-height: 1; padding: 2px 4px; }
 .po-subrow-bottom { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
-.po-sr-track { flex: 1.6; min-width: 0; }
+.po-sr-track { flex: 1.5; min-width: 0; }
+.po-sr-track input { background: #fffbeb !important; border: 1px solid #fde68a !important; }
 .po-sr-cost { flex: 1; min-width: 0; }
 .po-add-row { width: 100%; margin-top: 8px; font-size: 12px; }
+/* ===== 采购明细行：设备/地址/单号 亮色标签 ===== */
+.chip-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
+.chip { font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 600;
+  white-space: nowrap; display: inline-flex; align-items: center; gap: 2px; line-height: 1.5; }
+.chip-dev  { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+.chip-addr { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.chip-trk  { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+.chip-none { background: var(--gray-1); color: var(--gray-4); border: 1px dashed var(--gray-3); font-weight: 400; }
 /* ===== 存储诊断面板 ===== */
 .st-row { display: flex; justify-content: space-between; align-items: center;
   padding: 6px 0; font-size: 12px; border-bottom: 1px dashed var(--gray-2); }
@@ -1909,7 +1922,7 @@ select.input { cursor: pointer; }
 <script>
 
 // ===== 应用版本（改这个号 = 强制所有端刷新） =====
-const APP_VERSION = 'v18';
+const APP_VERSION = 'v19';
 
 // ===== 食物数据库 (130+) =====
 const FOOD_DB = [
@@ -4693,7 +4706,8 @@ function poSubRowHtml(gi, ri, row, item) {
   const stockQty = row.qty || 1;
   return `<div class="po-subrow" id="${rid}">
     <div class="po-subrow-top">
-      ${deviceCellHtml2(`purchaseDraft.items[${gi}].rows[${ri}].device`, row.device || '')}
+      ${deviceCellHtml2(gi, ri, row.device || '')}
+      ${addrCellHtml(gi, ri, row.address || '家')}
       <input type="text" class="input po-sr-size" value="${escapeHtml(row.size || '')}" placeholder="尺码"
         oninput="purchaseDraft.items[${gi}].rows[${ri}].size=this.value">
       <input type="text" class="input po-sr-color" value="${escapeHtml(row.color || '')}" placeholder="颜色"
@@ -4715,6 +4729,53 @@ function poSubRowHtml(gi, ri, row, item) {
   </div>`;
 }
 
+// 地址下拉（子条目用）：索引传参，避免字符串注入
+function addrCellHtml(gi, ri, current) {
+  const list = getAddrBook();
+  const cur = current || '家';
+  const opts = [...new Set(list.concat(cur ? [cur] : []))];
+  return `<select class="input po-sr-addr ${cur ? '' : 'dev-empty'}" data-g="${gi}" data-r="${ri}"
+      onchange="poSetSubAddr(${gi}, ${ri}, this.value)">
+    ${opts.map(a => `<option value="${escapeHtml(a)}" ${cur === a ? 'selected' : ''}>🏠 ${escapeHtml(a)}</option>`).join('')}
+    <option value="__new__">＋ 新增地址…</option>
+  </select>`;
+}
+
+function poSetSubAddr(gi, ri, val) {
+  const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+  const row = it && it.rows && it.rows[ri];
+  if (!row) return;
+  if (val === '__new__') {
+    const name = prompt('输入新地址：', '');
+    const a = (name || '').trim();
+    if (a) {
+      row.address = a;
+      const book = getAddrBook();
+      if (!book.includes(a)) { book.push(a); saveAddrBook(book); }
+    }
+  } else if (val) {
+    row.address = val;
+    const book = getAddrBook();
+    if (!book.includes(val)) { book.push(val); saveAddrBook(book); }
+  }
+  poRefreshAddrSelects();
+}
+
+function poRefreshAddrSelects() {
+  const book = getAddrBook();
+  document.querySelectorAll('.po-sr-addr').forEach(sel => {
+    const gi = parseInt(sel.getAttribute('data-g'), 10);
+    const ri = parseInt(sel.getAttribute('data-r'), 10);
+    const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+    const row = it && it.rows && it.rows[ri];
+    if (!row) return;
+    const cur = row.address || '家';
+    const opts = [...new Set(book.concat(cur ? [cur] : []))];
+    sel.innerHTML = opts.map(a => `<option value="${escapeHtml(a)}" ${cur === a ? 'selected' : ''}>🏠 ${escapeHtml(a)}</option>`).join('')
+      + '<option value="__new__">＋ 新增地址…</option>';
+  });
+}
+
 // 子条目专用单号输入框（可直接输入、可留空）
 function poTrackInputHtmlForRow(gi, ri, row) {
   const v = escapeHtml(row.tracking || '');
@@ -4723,36 +4784,66 @@ function poTrackInputHtmlForRow(gi, ri, row) {
     onchange="purchaseDraft.items[${gi}].rows[${ri}].tracking=this.value.trim()">`;
 }
 
-// 设备下拉（子条目用）：直接绑定到指定路径的 setter
-function deviceCellHtml2(exprPath, current) {
+// 设备下拉（子条目用）：只传索引，避免字符串注入导致属性被截断
+function deviceCellHtml2(gi, ri, current) {
   const opts = [...new Set(getDeviceBook().concat(current ? [current] : []))];
-  const sel = escapeHtml(current || '');
-  return `<select class="input po-sr-dev" onchange="poSetSubRowField('${exprPath}', this.value, ${JSON.stringify(current || '')})">
+  return `<select class="input po-sr-dev ${current ? '' : 'dev-empty'}" data-g="${gi}" data-r="${ri}" onchange="poSetSubDevice(${gi}, ${ri}, this.value)">
     <option value="" ${!current ? 'selected' : ''}>选设备</option>
     ${opts.map(d => `<option value="${escapeHtml(d)}" ${current === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')}
     <option value="__new__">＋ 新增设备…</option>
   </select>`;
 }
 
-// 设备下拉变更处理：新增走输入框，否则写回对应字段
-function poSetSubRowField(exprPath, val, prev) {
+// 设置某子条目的设备（索引传参，最稳）
+function poSetSubDevice(gi, ri, val) {
+  const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+  const row = it && it.rows && it.rows[ri];
+  if (!row) return;
+  let changed = false;
   if (val === '__new__') {
     const name = prompt('输入新设备名称：', '');
-    if (name && name.trim()) {
-      const dev = name.trim();
+    const dev = (name || '').trim();
+    if (dev) {
+      row.device = dev;
       const book = getDeviceBook();
       if (!book.includes(dev)) { book.push(dev); saveDeviceBook(book); }
-      poSetValueByPath(exprPath, dev);
-      renderPurchaseModal();
-    } else {
-      renderPurchaseModal();
+      changed = true;
     }
-    return;
+  } else if (val) {
+    row.device = val;
+    const book = getDeviceBook();
+    if (!book.includes(val)) { book.push(val); saveDeviceBook(book); }
+    changed = true;
   }
-  poSetValueByPath(exprPath, val);
-  const book = getDeviceBook();
-  if (val && !book.includes(val)) { book.push(val); saveDeviceBook(book); }
+  // 不整表重渲染（会丢其他输入框正在编辑的内容），只刷新所有设备下拉的选项与选中态
+  poRefreshDeviceSelects();
+  poSyncGroupQty(gi);
 }
+
+// 仅重建「设备下拉」的选项列表，保留页面上其他输入框的当前值
+function poRefreshDeviceSelects() {
+  const book = getDeviceBook();
+  document.querySelectorAll('.po-sr-dev').forEach(sel => {
+    const gi = parseInt(sel.getAttribute('data-g'), 10);
+    const ri = parseInt(sel.getAttribute('data-r'), 10);
+    const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+    const row = it && it.rows && it.rows[ri];
+    if (!row) return;
+    const cur = row.device || '';
+    const opts = [...new Set(book.concat(cur ? [cur] : []))];
+    sel.innerHTML = `<option value="" ${!cur ? 'selected' : ''}>选设备</option>`
+      + opts.map(d => `<option value="${escapeHtml(d)}" ${cur === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')
+      + '<option value="__new__">＋ 新增设备…</option>';
+    sel.classList.toggle('dev-empty', !cur);
+  });
+}
+
+// 旧函数保留兼容（内部转调新实现）
+function poSetSubRowField(exprPath, val, prev) {
+  const m = String(exprPath || '').match(/items\[(\d+)\]\.rows\[(\d+)\]/);
+  if (m) poSetSubDevice(+m[1], +m[2], val);
+}
+
 
 // 按 "purchaseDraft.items[0].rows[1].device" 这样的路径写值
 function poSetValueByPath(path, val) {
@@ -4963,9 +5054,19 @@ function po2CardHtml(po) {
             ${g.rows.map(r => {
               const it = r.it, i = r.idx;
               const rr = poItemReceived(it), q = it.qty || 1, done = rr >= q;
+              const dev = it.device || po.device || '';
+              const addr = it.address || po.address || '';
+              const tk = poItemTracking(it);
+              // 设备/地址/单号 亮色标签，收货时一眼可辨
+              const chips = [
+                dev ? `<span class="chip chip-dev">📱 ${escapeHtml(dev)}</span>` : '<span class="chip chip-none">未填设备</span>',
+                addr ? `<span class="chip chip-addr">🏠 ${escapeHtml(addr)}</span>` : '',
+                tk ? `<span class="chip chip-trk">📦 ${escapeHtml(tk)}</span>` : '<span class="chip chip-none">未填单号</span>'
+              ].filter(Boolean).join('');
               return `<div class="po2-row">
                 <div style="flex:1;min-width:0">
-                  <div class="nm">${escapeHtml(it.name || it.sku || '商品')} ${escapeHtml(it.size || '')} <span class="sub">×${q}</span></div>
+                  <div class="nm">${escapeHtml(it.name || it.sku || '商品')} ${escapeHtml(it.size || '')} ${it.color ? escapeHtml(it.color) + ' ' : ''}<span class="sub">×${q}</span></div>
+                  <div class="chip-row">${chips}</div>
                   <div class="sub">¥${it.cost || 0} · 已到 ${rr}/${q}${isDefect(it) ? ' · ⚠' + escapeHtml(it.defect) : ''}</div>
                 </div>
                 ${done
