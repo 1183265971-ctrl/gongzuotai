@@ -683,6 +683,23 @@ select.input { cursor: pointer; }
 .chip-addr { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
 .chip-trk  { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
 .chip-none { background: var(--gray-1); color: var(--gray-4); border: 1px dashed var(--gray-3); font-weight: 400; }
+/* ===== 数量高亮徽标 ===== */
+.qty-badge { display: inline-block; background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd;
+  border-radius: 6px; padding: 0 6px; font-size: 11px; font-weight: 700; margin-left: 4px; }
+.po2-grp-head .qb { margin-left: auto; }
+/* ===== 多单号编辑 ===== */
+.po-trk-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; }
+.trk-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
+  background: #fef3c7; color: #b45309; border: 1px solid #fde68a; border-radius: 20px; padding: 2px 8px; }
+.trk-chip b { cursor: pointer; font-size: 13px; line-height: 1; opacity: .65; padding: 0 1px; }
+.trk-chip b:active { opacity: 1; }
+.po-trk-input { display: flex; gap: 4px; align-items: center; }
+.po-trk-input input { flex: 1; min-width: 0; background: #fffbeb !important; border: 1px solid #fde68a !important; }
+.po-trk-add { flex-shrink: 0; padding: 6px 10px !important; font-size: 13px !important; }
+/* ===== 数量高亮 ===== */
+.po-sr-qty { background: #ede9fe !important; border: 1px solid #c4b5fd !important;
+  color: #6d28d9 !important; font-weight: 700 !important; }
+
 /* ===== 存储诊断面板 ===== */
 .st-row { display: flex; justify-content: space-between; align-items: center;
   padding: 6px 0; font-size: 12px; border-bottom: 1px dashed var(--gray-2); }
@@ -1922,7 +1939,7 @@ select.input { cursor: pointer; }
 <script>
 
 // ===== 应用版本（改这个号 = 强制所有端刷新） =====
-const APP_VERSION = 'v19';
+const APP_VERSION = 'v20';
 
 // ===== 食物数据库 (130+) =====
 const FOOD_DB = [
@@ -4577,6 +4594,49 @@ function quickReceiveInner(poId, idx, mode) {
   toast(`已入库 ${qty} 双 · ${it.name || '商品'} ${it.size || ''}`.trim());
 }
 
+// 按快递单号整包到货：只收这个包裹里的商品行
+function quickReceiveGroup(poId, tracking) {
+  try { quickReceiveGroupInner(poId, tracking); }
+  catch (e) {
+    toast('整包入库出错：' + (e && e.message ? e.message : '未知错误'));
+    console.error('[quickReceiveGroup]', e);
+  }
+}
+function quickReceiveGroupInner(poId, tracking) {
+  const data = loadShoesV2();
+  const po = (data.purchaseOrders || []).find(p => p.id === poId);
+  if (!po) return;
+  const g = poTrackGroups(po).find(x => x.tracking === tracking);
+  if (!g || !g.rows.length) { toast('没找到这个包裹'); return; }
+  let total = 0;
+  const y = window.scrollY;
+  const wh = (data.warehouses && data.warehouses[0] && data.warehouses[0].id) || '';
+  const inb = {
+    id: genId('in'), date: D(), warehouse: wh,
+    tracking: tracking || '', shippingFee: 0, otherFee: 0,
+    note: '包裹整包入库 ' + tracking, shelf: '', platform: po.platform,
+    device: (g.rows[0].it.device || po.device || ''), purchaseOrderNo: po.id, items: []
+  };
+  g.rows.forEach(r => {
+    const it = r.it;
+    const remain = (it.qty || 1) - poItemReceived(it);
+    if (remain <= 0) return;
+    const rc = receiveItemIntoStock(data, po, it, remain, it.cost || 0, '');
+    it.receivedQty = poItemReceived(it) + remain;
+    inb.items.push({ productId: rc.prod.id, size: rc.size, qty: remain, cost: rc.cost });
+    total += remain;
+  });
+  if (!total) { toast('这个包裹已经全部到货了'); return; }
+  data.inboundOrders.push(inb);
+  po.status = poHasRemaining(po) ? '部分到货' : '入库完成';
+  if (!saveShoesV2(data)) { toast('入库未保存：本机存储已满，请清理后重试'); return; }
+  poFlashId = poId;
+  renderPurchaseOrders();
+  poFlashId = '';
+  window.scrollTo(0, y);
+  toast('包裹 ' + tracking + ' 已入库 ' + total + ' 双');
+}
+
 // 整单全部到货
 function quickReceiveWholePO(poId) {
   try {
@@ -4655,13 +4715,13 @@ function poMatchSearch(po, key) {
 }
 
 // ===== v14：快递单号 ↔ 设备 ↔ 商品 绑定 =====
-function poItemTracking(it) { return ((it && it.tracking) || '').trim(); }
+function poItemTracking(it) { return firstTracking(it); }
 // 单号池：整单已录过的所有单号（PO 级 + 商品行级，去重）
 function poTrackingPool(po) {
   const set = [];
   const push = t => { const s = (t || '').trim(); if (s && set.indexOf(s) < 0) set.push(s); };
   poTrackings(po).forEach(push);
-  (po.items || []).forEach(it => push(poItemTracking(it)));
+  (po.items || []).forEach(it => rowTrackings(it).forEach(push));
   return set;
 }
 // 旧数据迁移：整单只有一个单号时，自动挂到每件商品上，老单子也能按单号分辨
@@ -4671,16 +4731,37 @@ function migratePoTracking(po) {
   if (items.some(it => poItemTracking(it))) return false;   // 已经绑过了
   const pool = poTrackingPool(po);
   if (pool.length !== 1) return false;                      // 多个单号无法推断，交给用户分配
-  items.forEach(it => { it.tracking = pool[0]; });
+  items.forEach(it => { it.trackings = [pool[0]]; it.tracking = pool[0]; });
   return true;
 }
 // 按单号把商品行分组：未分配单号的放最后
+// 取一行的所有单号（新结构 trackings 数组 / 老结构 tracking 字符串）
+function rowTrackings(it) {
+  if (!it) return [];
+  if (Array.isArray(it.trackings) && it.trackings.length) {
+    return it.trackings.map(t => String(t || '').trim()).filter(Boolean);
+  }
+  const old = String(it.tracking || '').trim();
+  return old ? [old] : [];
+}
+// 首单号（兼容老调用）
+function firstTracking(it) { return rowTrackings(it)[0] || ''; }
+
 function poTrackGroups(po) {
   const map = {}, order = [];
   (po.items || []).forEach((it, idx) => {
-    const t = poItemTracking(it);
-    if (!map[t]) { map[t] = { tracking: t, rows: [] }; order.push(t); }
-    map[t].rows.push({ it, idx });
+    const list = rowTrackings(it);
+    if (!list.length) {
+      // 未填单号
+      if (!map['']) { map[''] = { tracking: '', rows: [] }; order.push(''); }
+      map[''].rows.push({ it, idx });
+      return;
+    }
+    // 一行多个单号 → 出现在每个包裹分组里，方便按包裹查收
+    list.forEach(t => {
+      if (!map[t]) { map[t] = { tracking: t, rows: [] }; order.push(t); }
+      map[t].rows.push({ it, idx });
+    });
   });
   order.sort((a, b) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0));
   return order.map(t => map[t]);
@@ -4718,8 +4799,8 @@ function poSubRowHtml(gi, ri, row, item) {
         onclick="poRemoveSubRow(${gi},${ri})">×</button>
     </div>
     <div class="po-subrow-bottom">
-      <div class="po-sr-track">
-        ${poTrackInputHtmlForRow(gi, ri, row)}
+      <div class="po-sr-track" data-g="${gi}" data-r="${ri}">
+        ${poTrackMultiHtml(gi, ri, row)}
       </div>
       <div class="po-sr-cost">
         <input type="number" class="input" value="${row.cost || 0}" placeholder="成本" style="font-size:12px;padding:6px 8px"
@@ -4777,12 +4858,120 @@ function poRefreshAddrSelects() {
 }
 
 // 子条目专用单号输入框（可直接输入、可留空）
-function poTrackInputHtmlForRow(gi, ri, row) {
-  const v = escapeHtml(row.tracking || '');
-  return `<input type="text" class="input" value="${v}" placeholder="快递单号（选填）" style="font-size:12px;padding:6px 8px"
-    oninput="purchaseDraft.items[${gi}].rows[${ri}].tracking=this.value.trim()"
-    onchange="purchaseDraft.items[${gi}].rows[${ri}].tracking=this.value.trim()">`;
+// ===== 单号多值支持：一行可填多个包裹单号 =====
+// 存储：row.trackings = ['SF111','YT222']（新）；兼容老的 row.tracking = 'SF111'
+
+function rowTrackings(row) {
+  if (!row) return [];
+  if (Array.isArray(row.trackings) && row.trackings.length) return row.trackings.filter(Boolean);
+  const old = (row.tracking || '').trim();
+  return old ? [old] : [];
 }
+
+function setRowTrackings(row, arr) {
+  if (!row) return;
+  const clean = (arr || []).map(t => String(t).trim()).filter(Boolean);
+  row.trackings = clean;
+  row.tracking = clean[0] || '';        // 同步首单号，保持下游兼容
+  row._trkBase = clean.slice();         // 已确认的单号快照（正在输入的不算）
+  delete row._trkDraft;
+}
+
+// 子条目里的多单号编辑器
+function poTrackMultiHtml(gi, ri, row) {
+  const list = rowTrackings(row);
+  const chips = list.map((t, k) => `
+    <span class="trk-chip">${escapeHtml(t)}
+      <b onclick="event.stopPropagation();poRemoveRowTracking(${gi},${ri},${k})">×</b>
+    </span>`).join('');
+  return `<div class="po-trk-wrap" id="trkWrap_${gi}_${ri}">
+    ${chips ? `<div class="po-trk-chips">${chips}</div>` : ''}
+    <div class="po-trk-input">
+      <input type="text" class="input" id="trkIn_${gi}_${ri}"
+        placeholder="${list.length ? '再加一个单号…' : '快递单号（可多个）'}"
+        style="font-size:12px;padding:6px 8px"
+        oninput="poTypingTracking(${gi},${ri},this.value)"
+        onblur="poCommitTyping(${gi},${ri})"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();poAddRowTracking(${gi},${ri});}">
+      <button class="btn btn-outline btn-sm po-trk-add" onclick="poAddRowTracking(${gi},${ri})">＋</button>
+    </div>
+  </div>`;
+}
+
+// 添加单号（只重绘这一行，不丢其他输入）
+function poAddRowTracking(gi, ri) {
+  const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+  const row = it && it.rows && it.rows[ri];
+  if (!row) return;
+  const el = document.getElementById(`trkIn_${gi}_${ri}`);
+  const v = el ? String(el.value || '').trim() : '';
+  if (!v) { toast('请先输入单号'); return; }
+  const list = rowTrackings(row);
+  if (list.includes(v)) { toast('这个单号已经加过了'); if (el) el.value = ''; return; }
+  list.push(v);
+  setRowTrackings(row, list);
+  poRefreshTrackCell(gi, ri);
+  toast('已添加单号 ' + v);
+}
+
+function poRemoveRowTracking(gi, ri, k) {
+  const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+  const row = it && it.rows && it.rows[ri];
+  if (!row) return;
+  const list = rowTrackings(row);
+  list.splice(k, 1);
+  setRowTrackings(row, list);
+  poRefreshTrackCell(gi, ri);
+}
+
+// 正在输入的单号先记在草稿上，防止点了保存却没点＋导致丢失
+function poTypingTracking(gi, ri, val) {
+  const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+  const row = it && it.rows && it.rows[ri];
+  if (!row) return;
+  const v = String(val || '').trim();
+  row._trkDraft = v;
+  const base = Array.isArray(row._trkBase) ? row._trkBase.slice() : rowTrackings(row);
+  row.trackings = v ? base.concat([v]) : base;   // 边打边生效，不会丢
+  row.tracking = row.trackings[0] || '';
+}
+// 失焦 / 回车 / 保存时把没确认的输入收成正式单号
+function poCommitTyping(gi, ri) {
+  const it = purchaseDraft && purchaseDraft.items && purchaseDraft.items[gi];
+  const row = it && it.rows && it.rows[ri];
+  if (!row) return;
+  const v = String(row._trkDraft || '').trim();
+  row._trkDraft = '';
+  if (!v) return;
+  const list = rowTrackings(row);
+  if (list.indexOf(v) < 0) { list.push(v); setRowTrackings(row, list); }
+  poRefreshTrackCell(gi, ri);
+}
+// 保存前兜底：直接读 DOM，把所有没点的输入都收进来
+function commitAllPendingTrackings() {
+  if (!purchaseDraft || !purchaseDraft.items) return;
+  purchaseDraft.items.forEach((it, gi) => {
+    (it.rows || []).forEach((row, ri) => {
+      const el = document.getElementById('trkIn_' + gi + '_' + ri);
+      const v = el ? String(el.value || '').trim() : '';
+      if (!v) { delete row._trkDraft; return; }
+      const list = rowTrackings(row);
+      if (list.indexOf(v) < 0) { list.push(v); setRowTrackings(row, list); }
+      delete row._trkDraft;
+    });
+  });
+}
+
+// 只重绘单号单元格，避免整表重渲染丢失编辑状态
+function poRefreshTrackCell(gi, ri) {
+  const cell = document.querySelector(`.po-sr-track[data-g="${gi}"][data-r="${ri}"]`);
+  if (!cell) return;
+  const it = purchaseDraft.items[gi];
+  const row = it && it.rows && it.rows[ri];
+  if (!row) return;
+  cell.innerHTML = poTrackMultiHtml(gi, ri, row);
+}
+
 
 // 设备下拉（子条目用）：只传索引，避免字符串注入导致属性被截断
 function deviceCellHtml2(gi, ri, current) {
@@ -5050,22 +5239,25 @@ function po2CardHtml(po) {
               <span class="po2-grp-no">${g.tracking ? '📦 ' + escapeHtml(g.tracking) : '📦 未分配单号'}</span>
               <span class="po2-grp-meta">${escapeHtml(m.devs.join('/'))} · ${escapeHtml(m.addrs.join('/'))} · ${m.recv}/${m.qty}双</span>
               ${m.done ? '<span class="tag tag-green">已到齐</span>' : '<span class="tag tag-red">未到齐</span>'}
+              ${(!m.done && g.tracking) ? `<button class="qb full" onclick="quickReceiveGroup('${po.id}',${JSON.stringify(g.tracking).replace(/"/g,'&quot;')})">整包到货</button>` : ''}
             </div>
             ${g.rows.map(r => {
               const it = r.it, i = r.idx;
               const rr = poItemReceived(it), q = it.qty || 1, done = rr >= q;
               const dev = it.device || po.device || '';
               const addr = it.address || po.address || '';
-              const tk = poItemTracking(it);
+              const tkList = rowTrackings(it);
               // 设备/地址/单号 亮色标签，收货时一眼可辨
               const chips = [
                 dev ? `<span class="chip chip-dev">📱 ${escapeHtml(dev)}</span>` : '<span class="chip chip-none">未填设备</span>',
                 addr ? `<span class="chip chip-addr">🏠 ${escapeHtml(addr)}</span>` : '',
-                tk ? `<span class="chip chip-trk">📦 ${escapeHtml(tk)}</span>` : '<span class="chip chip-none">未填单号</span>'
+                tkList.length
+                  ? tkList.map(t => `<span class="chip chip-trk">📦 ${escapeHtml(t)}</span>`).join('')
+                  : '<span class="chip chip-none">未填单号</span>'
               ].filter(Boolean).join('');
               return `<div class="po2-row">
                 <div style="flex:1;min-width:0">
-                  <div class="nm">${escapeHtml(it.name || it.sku || '商品')} ${escapeHtml(it.size || '')} ${it.color ? escapeHtml(it.color) + ' ' : ''}<span class="sub">×${q}</span></div>
+                  <div class="nm">${escapeHtml(it.name || it.sku || '商品')} ${escapeHtml(it.size || '')} ${it.color ? escapeHtml(it.color) + ' ' : ''}<span class="qty-badge">×${q}</span></div>
                   <div class="chip-row">${chips}</div>
                   <div class="sub">¥${it.cost || 0} · 已到 ${rr}/${q}${isDefect(it) ? ' · ⚠' + escapeHtml(it.defect) : ''}</div>
                 </div>
@@ -5309,7 +5501,8 @@ function groupFlatItemsToDraft(items, po) {
       address: it.address || po.address || '家',
       size: it.size || '', color: it.color || '',
       qty: it.qty || 1, cost: it.cost || 0,
-      tracking: it.tracking || '',
+      trackings: rowTrackings(it),
+      tracking: firstTracking(it),
       receivedQty: it.receivedQty || 0,
       defect: it.defect || '无'
     });
@@ -5542,7 +5735,8 @@ function flattenDraftItems() {
         qty: qty,
         device: r.device || it.device || purchaseDraft.device || '',
         address: r.address || it.address || purchaseDraft.address || '家',
-        tracking: (r.tracking || '').trim(),
+        trackings: rowTrackings(r),
+        tracking: firstTracking(r),
         receivedQty: recv,
         defect: r.defect || '无',
       });
@@ -5553,6 +5747,7 @@ function flattenDraftItems() {
 
 function savePurchaseOrder() {
   if (!purchaseDraft) return;
+  commitAllPendingTrackings();      // 输入了但没点＋的单号也要保存
   if (purchaseDraft.items.length === 0) { toast('请添加至少一件商品'); return; }
   if (!validatePurchaseDraft()) return;
 
@@ -5630,7 +5825,7 @@ function showFillTrackingModal(poId) {
         <div class="po-trk-row">
           <div class="po-trk-info">
             <div style="font-size:12px;font-weight:600">${escapeHtml(it.name||it.sku||'商品')} ${escapeHtml(it.size||'')} ×${it.qty||1}</div>
-            <div style="font-size:10px;color:var(--gray-4)">${escapeHtml(it.device||po.device||'未填设备')} · ${escapeHtml(it.address||po.address||'家')}</div>
+            <div style="font-size:10px;color:var(--gray-4)">${escapeHtml(it.device||po.device||'未填设备')} · ${escapeHtml(it.address||po.address||'家')}${rowTrackings(it).length>1 ? ' · <b style="color:#b45309">' + rowTrackings(it).length + '个包裹</b>' : ''}</div>
           </div>
           <select class="input" style="font-size:12px;padding:6px 8px;flex:0 0 44%" onchange="setPoItemTracking('${poId}',${i},this.value)">
             ${poTrackOptionsHtml(po, poItemTracking(it), true)}
@@ -5656,6 +5851,7 @@ function setPoItemTracking(poId, idx, val) {
     if (!t || !t.trim()) { showFillTrackingModal(poId); return; }
     val = t.trim();
   }
+  po.items[idx].trackings = val ? [val] : [];
   po.items[idx].tracking = val;
   saveShoesV2(data);
   showFillTrackingModal(poId);
@@ -5678,6 +5874,7 @@ function autoAssignTrackingByDevice(poId) {
   keys.forEach((k,i) => { map[k] = pool[i] || ''; });
   (po.items||[]).forEach(it => {
     const k = (it.device||po.device||'') + '||' + (it.address||po.address||'');
+    it.trackings = map[k] ? [map[k]] : [];
     it.tracking = map[k];
   });
   saveShoesV2(data);
@@ -5694,7 +5891,10 @@ function removeTrackingNumber(poId, idx) {
   const t = poTrackingPool(po)[idx];
   if (!t) return;
   po.tracking = poTrackings(po).filter(x => x !== t);
-  (po.items||[]).forEach(it => { if (poItemTracking(it) === t) it.tracking = ''; });
+  (po.items||[]).forEach(it => {
+    const list = rowTrackings(it).filter(x => x !== t);
+    it.trackings = list; it.tracking = list[0] || '';
+  });
   saveShoesV2(data);
   showFillTrackingModal(poId);
   renderPurchaseOrders();
