@@ -670,6 +670,13 @@ select.input { cursor: pointer; }
 .po-sr-track { flex: 1.6; min-width: 0; }
 .po-sr-cost { flex: 1; min-width: 0; }
 .po-add-row { width: 100%; margin-top: 8px; font-size: 12px; }
+/* ===== 存储诊断面板 ===== */
+.st-row { display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0; font-size: 12px; border-bottom: 1px dashed var(--gray-2); }
+.st-row:last-child { border-bottom: none; padding-bottom: 0; }
+.st-name { color: var(--gray-6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-size { color: var(--gray-7); font-weight: 600; flex-shrink: 0; margin-left: 10px; }
+
 .po2-grp { border-radius: 8px; padding: 6px 9px 4px; margin-bottom: 6px; background: var(--gray-1); }
 .po2-grp:last-of-type { margin-bottom: 0; }
 .po2-grp-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 2px; }
@@ -1890,6 +1897,8 @@ select.input { cursor: pointer; }
       <button class="btn btn-block btn-blue" onclick="copyBackupCode()">📋 复制备份码（换网址搬数据用这个）</button>
       <button class="btn btn-block" onclick="pasteRestoreBackup()">📥 粘贴备份码恢复</button>
       <div class="backup-sep"></div>
+      <button class="btn btn-block" onclick="closeBackupModal();openStoragePanel()">📊 存储空间诊断与清理</button>
+      <div class="backup-sep"></div>
       <button class="btn btn-block" onclick="saveLocalSnapshot()">📌 创建本地快照</button>
       <button class="btn btn-block" onclick="restoreLocalSnapshot()">♻ 恢复本地快照</button>
       <div class="backup-meta" id="backupMeta"></div>
@@ -1900,7 +1909,7 @@ select.input { cursor: pointer; }
 <script>
 
 // ===== 应用版本（改这个号 = 强制所有端刷新） =====
-const APP_VERSION = 'v17';
+const APP_VERSION = 'v18';
 
 // ===== 食物数据库 (130+) =====
 const FOOD_DB = [
@@ -2161,7 +2170,37 @@ function reclaimStorage() {
       if (v) { freed += v.length; localStorage.removeItem(k); }
     } catch (e) {}
   }
+  // 再清所有 wb_backup* 开头的快照
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.indexOf('wb_backup') === 0) {
+      try {
+        const v = localStorage.getItem(k) || '';
+        freed += v.length;
+        localStorage.removeItem(k);
+      } catch (e) {}
+    }
+  }
   return freed;
+}
+
+// 二级腾空间：清理商品图片（保留名称/数量/成本/单号等全部业务数据）
+function reclaimImages() {
+  try {
+    const data = loadShoesV2();
+    let n = 0, bytes = 0;
+    (data.products || []).forEach(p => {
+      if (p.thumb) { bytes += p.thumb.length; p.thumb = null; n++; }
+    });
+    (data.purchaseOrders || []).forEach(po => {
+      (po.items || []).forEach(it => {
+        if (it.thumb) { bytes += it.thumb.length; it.thumb = null; n++; }
+      });
+    });
+    if (!n) return 0;
+    localStorage.setItem('wb_global_shoes_v2', JSON.stringify(data));
+    return bytes;
+  } catch (e) { return 0; }
 }
 
 function saveGlobal(key, val) {
@@ -2177,19 +2216,31 @@ function saveGlobal(key, val) {
     localStorage.setItem(storageKey, json);
     return true;
   } catch (e) {
-    // 多半是 QuotaExceededError：先腾快照空间，再重试一次
+    // 多半是 QuotaExceededError：逐级腾空间后重试
     const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
-    const freed = reclaimStorage();
-    if (freed > 0) {
+
+    // 第一级：清快照
+    const freed1 = reclaimStorage();
+    if (freed1 > 0) {
       try {
         localStorage.setItem(storageKey, json);
         toast('存储空间不足，已自动清理旧快照并保存成功');
         return true;
       } catch (e2) {}
     }
+
+    // 第二级：清商品图片（业务数据全保留），成功后提示用户
+    const freed2 = reclaimImages();
+    if (freed2 > 0) {
+      try {
+        localStorage.setItem(storageKey, json);
+        toast('存储已满，已自动清理商品图片腾出空间（名称/数量/成本都在）');
+        return true;
+      } catch (e3) {}
+    }
+
     if (isQuota) {
-      const mb = (json.length / 1024 / 1024).toFixed(2);
-      toast('保存失败：本机存储已满（本次需 ' + mb + 'MB）。请删掉一些带图片的旧商品，或导出备份后清理。');
+      toast('保存失败：本机存储已满。请到「设置 → 存储空间诊断」清理，或删掉一些旧采购单。');
     } else {
       toast('保存失败：' + (e && e.message ? e.message : '未知错误'));
     }
@@ -2451,6 +2502,125 @@ function openBackupModal() {
 }
 function closeBackupModal() {
   document.getElementById('backupModal').classList.remove('show');
+}
+
+
+// ===== 存储诊断与清理 =====
+// 统计 localStorage 各键占用，找出真正的空间杀手（多半是商品图片）
+
+function storageBreakdown() {
+  const rows = [];
+  let total = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    const v = localStorage.getItem(k) || '';
+    const bytes = (k.length + v.length) * 2;   // UTF-16，每字符 2 字节
+    total += bytes;
+    rows.push({ key: k, bytes, len: v.length });
+  }
+  rows.sort((a, b) => b.bytes - a.bytes);
+  return { rows, total };
+}
+
+// 统计所有商品图片占用
+function imageUsage() {
+  const data = loadShoesV2();
+  let count = 0, bytes = 0;
+  (data.products || []).forEach(p => {
+    if (p.thumb) { count++; bytes += (p.thumb.length) * 2; }
+  });
+  (data.purchaseOrders || []).forEach(po => {
+    (po.items || []).forEach(it => {
+      if (it.thumb) { count++; bytes += (it.thumb.length) * 2; }
+    });
+  });
+  return { count, bytes };
+}
+
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  return bytes + ' B';
+}
+
+function openStoragePanel() {
+  const { rows, total } = storageBreakdown();
+  const img = imageUsage();
+  const quota = 5 * 1024 * 1024;   // 浏览器通常 5MB
+  const pct = Math.min(100, Math.round(total / quota * 100));
+
+  const barColor = pct >= 90 ? 'var(--red)' : (pct >= 70 ? '#f59e0b' : 'var(--green)');
+
+  // 最大的几个键
+  const top = rows.slice(0, 6).map(r => {
+    const label = r.key === 'wb_global_shoes_v2' ? '球鞋/采购/库存数据'
+      : r.key.indexOf('wb_backup') === 0 ? '备份快照'
+      : r.key;
+    return `<div class="st-row">
+      <span class="st-name">${escapeHtml(label)}</span>
+      <span class="st-size">${fmtSize(r.bytes)}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('modalContent').innerHTML = `
+    <h3>存储空间诊断</h3>
+    <div style="background:var(--gray-1);padding:12px;border-radius:10px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px">
+        <span>已用 <b>${fmtSize(total)}</b></span>
+        <span style="color:var(--gray-5)">上限约 5 MB</span>
+      </div>
+      <div style="height:8px;background:var(--gray-2);border-radius:4px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${barColor};border-radius:4px"></div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:${barColor};margin-top:4px;font-weight:600">${pct}%</div>
+    </div>
+
+    <div style="font-size:12px;color:var(--gray-5);margin-bottom:6px">主要占用：</div>
+    <div style="background:var(--gray-1);border-radius:10px;padding:10px 12px;margin-bottom:14px">
+      ${top}
+    </div>
+
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#b45309">
+      📷 商品图片共 <b>${img.count}</b> 张，占 <b>${fmtSize(img.bytes)}</b>
+      ${img.count ? '<br>图片是空间主要占用，清理后可立刻腾出空间' : ''}
+    </div>
+
+    <button class="btn btn-block btn-primary" onclick="cleanupImages()">🧹 清理图片腾空间（保留商品数据）</button>
+    <button class="btn btn-block" onclick="cleanupBackups()">🗑 清理备份快照</button>
+    <button class="btn btn-block btn-outline" onclick="closeModal();openBackupModal()">← 返回备份面板</button>
+  `;
+  document.getElementById('modalOverlay').classList.add('show');
+}
+
+// 清理图片：只删图片，商品名/数量/成本/单号全部保留
+function cleanupImages() {
+  const data = loadShoesV2();
+  const img = imageUsage();
+  if (!img.count) { toast('没有图片可以清理'); return; }
+  if (!confirm(`将删除 ${img.count} 张商品图片，可腾出约 ${fmtSize(img.bytes)}。\n\n商品数据（名称/数量/成本/单号）全部保留，只清图片。\n\n确定继续？`)) return;
+  (data.products || []).forEach(p => { p.thumb = null; });
+  (data.purchaseOrders || []).forEach(po => {
+    (po.items || []).forEach(it => { it.thumb = null; });
+  });
+  if (!saveShoesV2(data)) { toast('清理失败，请重试'); return; }
+  toast(`已清理 ${img.count} 张图片，腾出 ${fmtSize(img.bytes)}`);
+  openStoragePanel();
+}
+
+// 清理备份快照
+function cleanupBackups() {
+  let freed = 0, n = 0;
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.indexOf('wb_backup') === 0) {
+      const v = localStorage.getItem(k) || '';
+      freed += (k.length + v.length) * 2;
+      localStorage.removeItem(k);
+      n++;
+    }
+  }
+  toast(n ? `已清理 ${n} 个快照，腾出 ${fmtSize(freed)}` : '没有快照可以清理');
+  openStoragePanel();
 }
 
 
