@@ -647,6 +647,29 @@ select.input { cursor: pointer; }
 .tag-unvalued:active { transform: scale(.96); }
 .bp-row { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px dashed var(--gray-2); }
 .bp-row:last-child { border-bottom: none; padding-bottom: 0; }
+/* ===== 采购商品卡片：商品头 + 多设备子条目 ===== */
+.po-item-card { margin-bottom: 10px; padding: 12px; }
+.po-item-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.po-item-thumb { display: flex; width: 44px; height: 44px; border: 1px dashed var(--gray-3);
+  border-radius: 8px; align-items: center; justify-content: center; cursor: pointer;
+  overflow: hidden; flex-shrink: 0; }
+.po-item-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.po-item-cond, .po-item-addr { font-size: 12px !important; padding: 6px 8px !important; flex: 1; min-width: 82px; }
+.po-item-sum { font-size: 11px; color: var(--gray-5); margin-left: auto; white-space: nowrap; }
+.po-subrows-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px; }
+.po-subrows-head > span:first-child { font-size: 12px; font-weight: 600; color: var(--gray-7); }
+.po-subrows-tip { font-size: 10px; color: var(--gray-4); }
+.po-subrows { display: flex; flex-direction: column; gap: 6px; }
+.po-subrow { background: var(--gray-1); border-radius: 8px; padding: 8px 9px; }
+.po-subrow-top { display: flex; align-items: center; gap: 5px; }
+.po-sr-dev { font-size: 12px !important; padding: 6px 6px !important; flex: 1.15; min-width: 0; }
+.po-sr-size, .po-sr-color { font-size: 12px !important; padding: 6px 6px !important; flex: 1; min-width: 0; }
+.po-sr-qty { font-size: 12px !important; padding: 6px 6px !important; width: 52px; flex-shrink: 0; text-align: center; }
+.po-sr-del { flex-shrink: 0; color: var(--gray-4); font-size: 16px; line-height: 1; padding: 2px 4px; }
+.po-subrow-bottom { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
+.po-sr-track { flex: 1.6; min-width: 0; }
+.po-sr-cost { flex: 1; min-width: 0; }
+.po-add-row { width: 100%; margin-top: 8px; font-size: 12px; }
 .po2-grp { border-radius: 8px; padding: 6px 9px 4px; margin-bottom: 6px; background: var(--gray-1); }
 .po2-grp:last-of-type { margin-bottom: 0; }
 .po2-grp-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 2px; }
@@ -1877,7 +1900,7 @@ select.input { cursor: pointer; }
 <script>
 
 // ===== 应用版本（改这个号 = 强制所有端刷新） =====
-const APP_VERSION = 'v15';
+const APP_VERSION = 'v16';
 
 // ===== 食物数据库 (130+) =====
 const FOOD_DB = [
@@ -2128,8 +2151,50 @@ function loadGlobal(key, def) {
   } catch { return def; }
 }
 
+// 自动腾空间：清掉可再生的快照类数据（自动版本快照 → 本地快照），不碰用户真实数据
+const RECLAIMABLE_KEYS = ['wb_backup_auto_v1', 'wb_backup_snapshot'];
+function reclaimStorage() {
+  let freed = 0;
+  for (const k of RECLAIMABLE_KEYS) {
+    try {
+      const v = localStorage.getItem(k);
+      if (v) { freed += v.length; localStorage.removeItem(k); }
+    } catch (e) {}
+  }
+  return freed;
+}
+
 function saveGlobal(key, val) {
-  localStorage.setItem(`wb_global_${key}`, JSON.stringify(val));
+  const storageKey = `wb_global_${key}`;
+  let json;
+  try {
+    json = JSON.stringify(val);
+  } catch (e) {
+    toast('数据序列化失败，可能有异常内容');
+    return false;
+  }
+  try {
+    localStorage.setItem(storageKey, json);
+    return true;
+  } catch (e) {
+    // 多半是 QuotaExceededError：先腾快照空间，再重试一次
+    const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014);
+    const freed = reclaimStorage();
+    if (freed > 0) {
+      try {
+        localStorage.setItem(storageKey, json);
+        toast('存储空间不足，已自动清理旧快照并保存成功');
+        return true;
+      } catch (e2) {}
+    }
+    if (isQuota) {
+      const mb = (json.length / 1024 / 1024).toFixed(2);
+      toast('保存失败：本机存储已满（本次需 ' + mb + 'MB）。请删掉一些带图片的旧商品，或导出备份后清理。');
+    } else {
+      toast('保存失败：' + (e && e.message ? e.message : '未知错误'));
+    }
+    return false;
+  }
 }
 
 // 球鞋数据 v2 (全局)
@@ -2238,7 +2303,7 @@ function loadShoesV2() {
 }
 
 function saveShoesV2(data) {
-  saveGlobal('shoes_v2', data);
+  return saveGlobal('shoes_v2', data);
 }
 
 // ===== 数据版本与备份（独立持久化保障） =====
@@ -4420,13 +4485,218 @@ function poGroupMeta(po, g) {
   const recv = g.rows.reduce((s, r) => s + poItemReceived(r.it), 0);
   return { devs, addrs, qty, recv, done: recv >= qty };
 }
-// 单号下拉选项：已有单号池 + 未填 + 新增
-function poTrackOptionsHtml(po, current, withNew) {
+// ===== 采购商品编辑区：一个商品 = 商品头 + 多个设备子条目 =====
+
+// 取某商品下的子条目数组（兼容旧数据：老结构只有一行内容）
+function poGroupRows(it) {
+  if (Array.isArray(it.rows) && it.rows.length) return it.rows;
+  return [];
+}
+
+// 把一行子条目渲染成可编辑 UI
+function poSubRowHtml(gi, ri, row, item) {
+  const rid = `sr_${gi}_${ri}`;
+  const stockQty = row.qty || 1;
+  return `<div class="po-subrow" id="${rid}">
+    <div class="po-subrow-top">
+      ${deviceCellHtml2(`purchaseDraft.items[${gi}].rows[${ri}].device`, row.device || '')}
+      <input type="text" class="input po-sr-size" value="${escapeHtml(row.size || '')}" placeholder="尺码"
+        oninput="purchaseDraft.items[${gi}].rows[${ri}].size=this.value">
+      <input type="text" class="input po-sr-color" value="${escapeHtml(row.color || '')}" placeholder="颜色"
+        oninput="purchaseDraft.items[${gi}].rows[${ri}].color=this.value">
+      <input type="number" class="input po-sr-qty" value="${stockQty}" placeholder="数量" min="1"
+        oninput="purchaseDraft.items[${gi}].rows[${ri}].qty=Math.max(1,parseInt(this.value)||1);poSyncGroupQty(${gi})">
+      <button class="icon-btn po-sr-del" title="删掉这一行"
+        onclick="poRemoveSubRow(${gi},${ri})">×</button>
+    </div>
+    <div class="po-subrow-bottom">
+      <div class="po-sr-track">
+        ${poTrackInputHtmlForRow(gi, ri, row)}
+      </div>
+      <div class="po-sr-cost">
+        <input type="number" class="input" value="${row.cost || 0}" placeholder="成本" style="font-size:12px;padding:6px 8px"
+          oninput="purchaseDraft.items[${gi}].rows[${ri}].cost=parseFloat(this.value)||0;poSyncGroupQty(${gi})">
+      </div>
+    </div>
+  </div>`;
+}
+
+// 子条目专用单号输入框（可直接输入、可留空）
+function poTrackInputHtmlForRow(gi, ri, row) {
+  const v = escapeHtml(row.tracking || '');
+  return `<input type="text" class="input" value="${v}" placeholder="快递单号（选填）" style="font-size:12px;padding:6px 8px"
+    oninput="purchaseDraft.items[${gi}].rows[${ri}].tracking=this.value.trim()"
+    onchange="purchaseDraft.items[${gi}].rows[${ri}].tracking=this.value.trim()">`;
+}
+
+// 设备下拉（子条目用）：直接绑定到指定路径的 setter
+function deviceCellHtml2(exprPath, current) {
+  const opts = [...new Set(getDeviceBook().concat(current ? [current] : []))];
+  const sel = escapeHtml(current || '');
+  return `<select class="input po-sr-dev" onchange="poSetSubRowField('${exprPath}', this.value, ${JSON.stringify(current || '')})">
+    <option value="" ${!current ? 'selected' : ''}>选设备</option>
+    ${opts.map(d => `<option value="${escapeHtml(d)}" ${current === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')}
+    <option value="__new__">＋ 新增设备…</option>
+  </select>`;
+}
+
+// 设备下拉变更处理：新增走输入框，否则写回对应字段
+function poSetSubRowField(exprPath, val, prev) {
+  if (val === '__new__') {
+    const name = prompt('输入新设备名称：', '');
+    if (name && name.trim()) {
+      const dev = name.trim();
+      const book = getDeviceBook();
+      if (!book.includes(dev)) { book.push(dev); saveDeviceBook(book); }
+      poSetValueByPath(exprPath, dev);
+      renderPurchaseModal();
+    } else {
+      renderPurchaseModal();
+    }
+    return;
+  }
+  poSetValueByPath(exprPath, val);
+  const book = getDeviceBook();
+  if (val && !book.includes(val)) { book.push(val); saveDeviceBook(book); }
+}
+
+// 按 "purchaseDraft.items[0].rows[1].device" 这样的路径写值
+function poSetValueByPath(path, val) {
+  try {
+    const m = path.match(/^purchaseDraft\.items\[(\d+)\]\.rows\[(\d+)\]\.(\w+)$/);
+    if (m) {
+      const gi = +m[1], ri = +m[2], field = m[3];
+      if (purchaseDraft.items[gi] && purchaseDraft.items[gi].rows[ri]) {
+        purchaseDraft.items[gi].rows[ri][field] = val;
+      }
+    }
+  } catch (e) {}
+}
+
+
+// 汇总某商品所有子条目的数量和成本
+function poGroupTotals(it) {
+  const rows = poGroupRows(it);
+  let qty = 0, cost = 0;
+  rows.forEach(r => {
+    const q = r.qty || 1;
+    qty += q;
+    cost += (r.cost || 0) * q;
+  });
+  return { qty, cost };
+}
+
+function poSyncGroupQty(gi) {
+  const it = purchaseDraft.items[gi];
+  if (!it) return;
+  const t = poGroupTotals(it);
+  const el = document.getElementById('poGroupSum_' + gi);
+  if (el) el.textContent = `共 ${t.qty} 件 · 成本 ¥${t.cost.toFixed(0)}`;
+}
+
+function poAddSubRow(gi) {
+  const it = purchaseDraft.items[gi];
+  if (!it) return;
+  if (!Array.isArray(it.rows)) it.rows = [];
+  it.rows.push({
+    device: it.device || purchaseDraft.device || '',
+    address: it.address || purchaseDraft.address || '家',
+    size: '', color: '', qty: 1, cost: it.cost || 0, tracking: '',
+    receivedQty: 0, defect: '无'
+  });
+  renderPurchaseModal();
+  // 渲染后滚到新增那行，方便继续填
+  setTimeout(() => {
+    const el = document.getElementById(`sr_${gi}_${it.rows.length - 1}`);
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, 60);
+}
+
+function poRemoveSubRow(gi, ri) {
+  const it = purchaseDraft.items[gi];
+  if (!it || !Array.isArray(it.rows)) return;
+  it.rows.splice(ri, 1);
+  renderPurchaseModal();
+}
+
+// 把商品头的图片应用到该商品下所有子条目（收货入库时统一带图）
+function poApplyThumbToRows(gi) {
+  const it = purchaseDraft.items[gi];
+  if (!it) return;
+  const t = it.thumb || null;
+  (it.rows || []).forEach(r => { r.thumb = t; });
+}
+
+// 商品头卡片
+function poItemCardHtml(it, i) {
+  const thumbHtml = it.thumb
+    ? `<img src="${it.thumb}" style="width:44px;height:44px;border-radius:8px;object-fit:cover">`
+    : '<span style="font-size:18px;color:var(--gray-4)">+</span>';
+  const rows = it.rows || [];
+  const t = poGroupTotals(it);
+  return `<div class="card po-item-card">
+    <div class="po-item-head">
+      <label class="img-upload-btn po-item-thumb">
+        <input type="file" accept="image/*" style="display:none" onchange="uploadPurchaseImg(this, ${i})">
+        ${thumbHtml}
+      </label>
+      <input type="text" class="input" value="${escapeHtml(it.name || '')}" placeholder="货号/名称"
+        style="flex:1;font-size:13px;min-width:0"
+        oninput="purchaseDraft.items[${i}].name=this.value">
+      <button class="icon-btn" title="从历史商品选择" style="flex-shrink:0"
+        onclick="showPurchaseHistory(${i})">📋</button>
+      <button class="icon-btn" title="删除该商品" style="flex-shrink:0"
+        onclick="purchaseDraft.items.splice(${i},1);renderPurchaseModal()">×</button>
+    </div>
+
+    <div class="po-item-meta">
+      <input type="text" class="input" value="${escapeHtml(it.condition || '全新')}" readonly
+        style="display:none">
+      <select class="input po-item-cond" onchange="purchaseDraft.items[${i}].condition=this.value;poApplyCondToRows(${i})">
+        ${['全新', '微瑕', '次新品'].map(v => `<option value="${v}" ${(it.condition || '全新') === v ? 'selected' : ''}>${v}</option>`).join('')}
+      </select>
+      <select class="input po-item-addr" onchange="purchaseDraft.items[${i}].address=this.value;poApplyAddrToRows(${i})">
+        ${getAddrBook().map(a => `<option value="${escapeHtml(a)}" ${((it.address || '家') === a) ? 'selected' : ''}>${escapeHtml(a)}</option>`).join('')}
+      </select>
+      <span class="po-item-sum" id="poGroupSum_${i}">共 ${t.qty} 件 · 成本 ¥${t.cost.toFixed(0)}</span>
+    </div>
+
+    <div class="po-subrows-head">
+      <span>按设备/尺码拆分</span>
+      <span class="po-subrows-tip">每台设备买了几件、什么尺码颜色、单号多少</span>
+    </div>
+
+    <div class="po-subrows">
+      ${rows.length ? rows.map((r, ri) => poSubRowHtml(i, ri, r, it)).join('')
+        : '<div class="empty-state" style="padding:10px;font-size:12px">还没有明细，点下面「＋ 加一台设备」</div>'}
+    </div>
+
+    <button class="btn btn-outline btn-sm po-add-row" onclick="poAddSubRow(${i})">＋ 加一台设备</button>
+  </div>`;
+}
+
+function poApplyCondToRows(gi) {
+  const it = purchaseDraft.items[gi];
+  if (it && Array.isArray(it.rows)) it.rows.forEach(r => { r.condition = it.condition; });
+}
+function poApplyAddrToRows(gi) {
+  const it = purchaseDraft.items[gi];
+  if (it && Array.isArray(it.rows)) it.rows.forEach(r => { r.address = it.address; });
+}
+
+// 单号输入：直接可编辑的输入框（不再用只能选不能改的下拉）
+function poTrackInputHtml(po, current, idx) {
   const pool = poTrackingPool(po);
-  if (current && pool.indexOf(current) < 0) pool.push(current);
-  return `<option value="" ${!current ? 'selected' : ''}>未填单号</option>`
-    + pool.map(t => `<option value="${escapeHtml(t)}" ${t === current ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')
-    + (withNew ? '<option value="__new__">＋ 新单号…</option>' : '');
+  const v = escapeHtml(current || '');
+  const listId = 'trkList_' + idx;
+  const datalist = pool.length
+    ? `<datalist id="${listId}">${pool.map(t => `<option value="${escapeHtml(t)}">`).join('')}</datalist>`
+    : '';
+  return `<input type="text" class="input" id="trkInput_${idx}" list="${pool.length ? listId : ''}"
+      value="${v}" placeholder="填快递单号（选填，可留空）"
+      style="font-size:12px;padding:6px 8px"
+      oninput="purchaseDraft.items[${idx}].tracking=this.value.trim()"
+      onchange="purchaseDraft.items[${idx}].tracking=this.value.trim()">${datalist}`;
 }
 
 // 折叠式采购单卡片：默认只露核心信息，点一下展开明细
@@ -4713,16 +4983,51 @@ function editPurchaseOrder(poId) {
   purchaseDraft.tracking = poTrackings(po);
   purchaseDraft.address = po.address || '家';
   purchaseDraft.device = po.device || '';
-  // 旧数据迁移：PO级 设备/地址 下放到每个商品
-  purchaseDraft.items.forEach(it => {
-    if (!it.device) it.device = po.device || '';
-    if (!it.address) it.address = po.address || '家';
-  });
+  // 迁移：扁平 items → 按 groupId 聚合成「商品 + 子条目」
+  purchaseDraft.items = groupFlatItemsToDraft(po.items || [], po);
   renderPurchaseModal();
 }
 
+// 扁平 items → 商品卡片草稿（同 groupId 归为一张卡；无 groupId 的同名同图合并）
+function groupFlatItemsToDraft(items, po) {
+  const order = [];
+  const map = {};
+  items.forEach((it, idx) => {
+    const key = it.groupId
+      || (it.name || '') + '¦' + (it.thumb ? String(it.thumb).slice(-24) : '')
+      || ('solo_' + idx);
+    if (!map[key]) {
+      map[key] = {
+        groupId: it.groupId || ('g_mig_' + key),
+        name: it.name || '', condition: it.condition || '全新',
+        thumb: it.thumb || null,
+        device: it.device || po.device || '',
+        address: it.address || po.address || '家',
+        rows: []
+      };
+      order.push(map[key]);
+    }
+    const g = map[key];
+    if (!g.thumb && it.thumb) g.thumb = it.thumb;
+    g.rows.push({
+      device: it.device || po.device || '',
+      address: it.address || po.address || '家',
+      size: it.size || '', color: it.color || '',
+      qty: it.qty || 1, cost: it.cost || 0,
+      tracking: it.tracking || '',
+      receivedQty: it.receivedQty || 0,
+      defect: it.defect || '无'
+    });
+  });
+  return order;
+}
+
 function renderPurchaseModal() {
-  const totalCost = purchaseDraft.items.reduce((s,it)=>s+(it.cost||0)*(it.qty||1),0);
+  // 成本合计：遍历每个商品下的子条目
+  const totalCost = (purchaseDraft.items || []).reduce((s, it) => {
+    const rows = Array.isArray(it.rows) ? it.rows : [];
+    return s + rows.reduce((s2, r) => s2 + (r.cost || 0) * (r.qty || 1), 0);
+  }, 0);
   document.getElementById('modalContent').innerHTML = `
     <div class="sheet-grip"></div>
     <h3>${editingPurchaseId ? '编辑采购单' : '新建采购单'}</h3>
@@ -4755,55 +5060,8 @@ function renderPurchaseModal() {
       <button class="btn btn-outline btn-sm" onclick="addPurchaseItem()">+ 添加商品</button>
     </div>
     <div id="poItems">
-      ${purchaseDraft.items.length === 0 ? '<div class="empty-state" style="padding:16px">暂无商品，点击添加</div>' :
-        purchaseDraft.items.map((it,i) => {
-          const thumbHtml = it.thumb
-            ? `<img src="${it.thumb}" style="width:40px;height:40px;border-radius:8px;object-fit:cover">`
-            : '';
-          return `<div class="card" style="margin-bottom:8px;padding:12px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <label class="img-upload-btn" style="display:flex;width:40px;height:40px;border:1px dashed var(--gray-3);border-radius:8px;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;flex-shrink:0">
-                <input type="file" accept="image/*" style="display:none" onchange="uploadPurchaseImg(this, ${i})">
-                ${thumbHtml || '<span style="font-size:18px;color:var(--gray-4)">+</span>'}
-              </label>
-              <input type="text" class="input" value="${it.name||''}" placeholder="货号/名称" style="flex:1;font-size:13px;min-width:0" oninput="purchaseDraft.items[${i}].name=this.value">
-              <button class="icon-btn" title="从历史商品选择" style="font-size:15px;flex-shrink:0" onclick="showPurchaseHistory(${i})">📋</button>
-              <button class="icon-btn" onclick="purchaseDraft.items.splice(${i},1);renderPurchaseModal()">×</button>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px">
-              <input type="text" class="input" value="${it.size||''}" placeholder="尺码" style="font-size:12px;padding:6px 8px" oninput="purchaseDraft.items[${i}].size=this.value">
-              <select class="input" style="font-size:12px;padding:6px 8px" onchange="purchaseDraft.items[${i}].condition=this.value">
-                ${['全新','微瑕','次新品'].map(v=>`<option value="${v}" ${it.condition===v?'selected':''}>${v}</option>`).join('')}
-              </select>
-              <input type="number" class="input" value="${it.cost||''}" placeholder="成本" style="font-size:12px;padding:6px 8px" oninput="purchaseDraft.items[${i}].cost=parseFloat(this.value)||0">
-              <input type="number" class="input" value="${it.qty||1}" placeholder="数量" style="font-size:12px;padding:6px 8px" oninput="purchaseDraft.items[${i}].qty=parseInt(this.value)||1">
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
-              ${deviceCellHtml(i, it.device||'')}
-              <select class="input" style="font-size:12px;padding:6px 8px" onchange="purchaseDraft.items[${i}].address=this.value">
-                ${getAddrBook().map(a=>`<option value="${escapeHtml(a)}" ${((it.address||'家')===a)?'selected':''}>${escapeHtml(a)}</option>`).join('')}
-              </select>
-            </div>
-            <div style="margin-top:6px">
-              <select class="input" style="font-size:12px;padding:6px 8px" onchange="purchaseDraft.items[${i}].tracking=this.value">
-                ${poTrackOptionsHtml(purchaseDraft, poItemTracking(it))}
-              </select>
-              <div style="font-size:10px;color:var(--gray-4);margin-top:2px">这件货的快递单号（选填，收包裹时好分辨）</div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">
-              <div>
-                <input type="number" class="input" value="${poItemReceived(it)}" min="0" max="${it.qty||1}" placeholder="已到货" style="font-size:12px;padding:6px 8px" oninput="purchaseDraft.items[${i}].receivedQty=Math.max(0,Math.min(parseInt(this.value)||0, purchaseDraft.items[${i}].qty||1))">
-                <div style="font-size:10px;color:var(--gray-4);margin-top:2px">已到货 / 采购 ${it.qty||1} 双</div>
-              </div>
-              <div>
-                <select class="input" style="font-size:12px;padding:6px 8px;${isDefect(it)?'border-color:var(--red);color:var(--red);font-weight:600':''}" onchange="purchaseDraft.items[${i}].defect=this.value;renderPurchaseModal()">
-                  ${PO_DEFECT_TYPES.map(v=>`<option value="${v}" ${((it.defect||'无')===v)?'selected':''}>${v==='无'?'✅ 无瑕疵':'⚠ '+v}</option>`).join('')}
-                </select>
-                <div style="font-size:10px;color:var(--gray-4);margin-top:2px">瑕疵/破损标记</div>
-              </div>
-            </div>
-          </div>`;
-        }).join('')
+      ${purchaseDraft.items.length === 0 ? '<div class="empty-state" style="padding:16px">暂无商品，点击右上角「+ 添加商品」</div>' :
+        purchaseDraft.items.map((it, i) => poItemCardHtml(it, i)).join('')
       }
     </div>
     <div style="display:flex;gap:8px">
@@ -4885,10 +5143,16 @@ function applyHistoryItemAt(i) {
   const it = purchaseDraft.items[historyTargetIdx];
   if (!it) return;
   it.name = h.name;
-  it.cost = h.cost || it.cost || 0;
-  if (h.size) it.size = h.size;
   it.condition = h.condition || it.condition || '全新';
-  if (h.thumb && !it.thumb) it.thumb = h.thumb;
+  if (h.thumb && !it.thumb) {
+    it.thumb = h.thumb;
+    if (Array.isArray(it.rows)) it.rows.forEach(r => { r.thumb = h.thumb; });
+  }
+  // 成本/尺码带到第一行明细上
+  if (Array.isArray(it.rows) && it.rows.length) {
+    if (h.cost) it.rows[0].cost = h.cost;
+    if (h.size) it.rows[0].size = h.size;
+  }
   window.__phList = null;
   historyTargetIdx = null;
   closeModal();
@@ -4897,9 +5161,14 @@ function applyHistoryItemAt(i) {
 }
 function addPurchaseItem() {
   if (!purchaseDraft) return;
-  purchaseDraft.items.push({sku:'', name:'', size:'', condition:'全新', cost:0, qty:1, thumb:null,
+  purchaseDraft.items.push({
+    groupId: genId('pg'), name: '', condition: '全新', thumb: null,
     device: purchaseDraft.device || '', address: purchaseDraft.address || '家',
-    receivedQty: 0, defect: '无'});
+    rows: [{
+      device: purchaseDraft.device || '', address: purchaseDraft.address || '家',
+      size: '', color: '', qty: 1, cost: 0, tracking: '', receivedQty: 0, defect: '无'
+    }]
+  });
   renderPurchaseModal();
 }
 
@@ -4907,45 +5176,107 @@ function uploadPurchaseImg(input, itemIndex) {
   const file = input.files[0];
   if (!file) return;
   const reader = new FileReader();
+  reader.onerror = function() { toast('图片读取失败，请换一张试试'); };
   reader.onload = function(e) {
     const img = new Image();
+    img.onerror = function() { toast('图片格式不支持，请换一张试试'); };
     img.onload = function() {
-      const canvas = document.createElement('canvas');
-      const maxW = 300;
-      const scale = Math.min(maxW / img.width, maxW / img.height, 1);
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      const thumb = canvas.toDataURL('image/jpeg', 0.7);
-      purchaseDraft.items[itemIndex].thumb = thumb;
-      renderPurchaseModal();
+      try {
+        const canvas = document.createElement('canvas');
+        const maxW = 240;                 // 压到 240px，约为原尺寸的 1/3 体积
+        const scale = Math.min(maxW / img.width, maxW / img.height, 1);
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        const thumb = canvas.toDataURL('image/jpeg', 0.6);
+        purchaseDraft.items[itemIndex].thumb = thumb;
+        // 图片属于该商品，同步到其所有子条目，收货入库时跟着走
+        if (Array.isArray(purchaseDraft.items[itemIndex].rows)) {
+          purchaseDraft.items[itemIndex].rows.forEach(r => { r.thumb = thumb; });
+        }
+        renderPurchaseModal();
+        toast('图片已添加');
+      } catch (err) {
+        toast('图片处理失败：' + (err && err.message ? err.message : '未知错误'));
+      }
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
 
+// 校验采购草稿：每个商品至少要有一行有效明细
+function validatePurchaseDraft() {
+  for (let i = 0; i < purchaseDraft.items.length; i++) {
+    const it = purchaseDraft.items[i];
+    const rows = Array.isArray(it.rows) ? it.rows : [];
+    if (!rows.length) {
+      toast('第 ' + (i + 1) + ' 个商品还没添加明细，点「＋ 加一台设备」');
+      return false;
+    }
+    for (let j = 0; j < rows.length; j++) {
+      const r = rows[j];
+      if (!(r.qty > 0)) {
+        toast('「' + (it.name || '商品') + '」第 ' + (j + 1) + ' 行数量需大于 0');
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// 把「商品 + 子条目」的草稿展开成扁平 items（下游到货/入库/单号逻辑全部复用）
+function flattenDraftItems() {
+  const flat = [];
+  (purchaseDraft.items || []).forEach((it, gi) => {
+    const groupId = it.groupId || it.id || ('g_' + gi + '_' + Date.now());
+    it.groupId = groupId;
+    const rows = Array.isArray(it.rows) ? it.rows : [];
+    rows.forEach((r, ri) => {
+      const qty = Math.max(1, parseInt(r.qty) || 1);
+      const recv = Math.max(0, Math.min(parseInt(r.receivedQty) || 0, qty));
+      flat.push({
+        id: r.id || genId('pi'),
+        groupId: groupId,                        // 同一商品的分组标识
+        name: it.name || '',
+        thumb: it.thumb || r.thumb || null,
+        size: (r.size || '').trim(),
+        color: (r.color || '').trim(),
+        condition: it.condition || '全新',
+        cost: parseFloat(r.cost) || 0,
+        qty: qty,
+        device: r.device || it.device || purchaseDraft.device || '',
+        address: r.address || it.address || purchaseDraft.address || '家',
+        tracking: (r.tracking || '').trim(),
+        receivedQty: recv,
+        defect: r.defect || '无',
+      });
+    });
+  });
+  return flat;
+}
+
 function savePurchaseOrder() {
   if (!purchaseDraft) return;
   if (purchaseDraft.items.length === 0) { toast('请添加至少一件商品'); return; }
+  if (!validatePurchaseDraft()) return;
+
+  const flatItems = flattenDraftItems();
+  if (!flatItems.length) { toast('请至少填写一行商品明细'); return; }
+
   const data = loadShoesV2();
-  // 商品级 设备/地址 缺省回填（取 PO 级默认），并校正到货数量
-  purchaseDraft.items.forEach(it => {
-    if (!it.device) it.device = purchaseDraft.device || '';
-    if (!it.address) it.address = purchaseDraft.address || '家';
-    if (!it.defect) it.defect = '无';
-    it.receivedQty = Math.max(0, Math.min(it.receivedQty||0, it.qty||1));
-  });
   // 记住用过的设备，供下次下拉建议
   const devBook = getDeviceBook();
-  [purchaseDraft.device].concat(purchaseDraft.items.map(it=>it.device)).forEach(d => {
+  [purchaseDraft.device].concat(flatItems.map(it => it.device)).forEach(d => {
     if (d && !devBook.includes(d)) devBook.push(d);
   });
   saveDeviceBook(devBook);
   if (editingPurchaseId) {
     const idx = data.purchaseOrders.findIndex(p => p.id === editingPurchaseId);
     if (idx >= 0) {
-      data.purchaseOrders[idx] = { ...data.purchaseOrders[idx], ...purchaseDraft };
+      const merged = { ...data.purchaseOrders[idx], ...purchaseDraft, items: flatItems };
+      delete merged.rows;
+      data.purchaseOrders[idx] = merged;
     }
   } else {
     const po = {
@@ -4953,7 +5284,7 @@ function savePurchaseOrder() {
       platform: purchaseDraft.platform,
       date: purchaseDraft.date,
       device: purchaseDraft.device,
-      items: purchaseDraft.items,
+      items: flatItems,
       shippingFee: purchaseDraft.shippingFee,
       tracking: Array.isArray(purchaseDraft.tracking) ? purchaseDraft.tracking : (purchaseDraft.tracking ? [purchaseDraft.tracking] : []),
       address: purchaseDraft.address || '家',
@@ -4962,7 +5293,10 @@ function savePurchaseOrder() {
     };
     data.purchaseOrders.push(po);
   }
-  saveShoesV2(data);
+  if (!saveShoesV2(data)) {
+    // 保存失败（多为存储满）：不要关闭弹窗，让用户能看到数据还在、可重试
+    return;
+  }
   closeModal();
   renderPurchaseOrders();
   toast(editingPurchaseId ? '采购单已更新' : '采购单已创建');
