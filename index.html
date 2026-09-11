@@ -5075,7 +5075,7 @@ function poAddSubRow(gi) {
   it.rows.push({
     device: it.device || purchaseDraft.device || '',
     address: it.address || purchaseDraft.address || '家',
-    size: '', color: '', qty: 1, cost: it.cost || 0, tracking: '',
+    size: '', color: '', qty: 1, cost: it.cost || 0, trackings: [], tracking: '',
     receivedQty: 0, defect: '无'
   });
   renderPurchaseModal();
@@ -5503,7 +5503,7 @@ function groupFlatItemsToDraft(items, po) {
       qty: it.qty || 1, cost: it.cost || 0,
       trackings: rowTrackings(it),
       tracking: firstTracking(it),
-      receivedQty: it.receivedQty || 0,
+      receivedQty: it.receivedQty || 0,   // 编辑时不能丢已到货数量
       defect: it.defect || '无'
     });
   });
