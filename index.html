@@ -1900,7 +1900,7 @@ select.input { cursor: pointer; }
 <script>
 
 // ===== 应用版本（改这个号 = 强制所有端刷新） =====
-const APP_VERSION = 'v16';
+const APP_VERSION = 'v17';
 
 // ===== 食物数据库 (130+) =====
 const FOOD_DB = [
@@ -4353,6 +4353,15 @@ function receiveItemIntoStock(data, po, it, qty, cost, shelf) {
 
 // 一键到货：mode = 1（+1 双）或 'all'（全部到货），不需要弹窗
 function quickReceive(poId, idx, mode) {
+  try {
+    quickReceiveInner(poId, idx, mode);
+  } catch (e) {
+    toast('入库出错：' + (e && e.message ? e.message : '未知错误'));
+    console.error('[quickReceive]', e);
+  }
+}
+
+function quickReceiveInner(poId, idx, mode) {
   const data = loadShoesV2();
   const po = (data.purchaseOrders || []).find(p => p.id === poId);
   if (!po) return;
@@ -4374,7 +4383,10 @@ function quickReceive(poId, idx, mode) {
   inb.items.push({ productId: r.prod.id, size: r.size, qty, cost: r.cost });
   data.inboundOrders.push(inb);
   po.status = poHasRemaining(po) ? '部分到货' : '入库完成';
-  saveShoesV2(data);
+  if (!saveShoesV2(data)) {
+    toast('入库未保存：本机存储已满，请清理后重试');
+    return;
+  }
   poFlashId = poId;
   renderPurchaseOrders();
   poFlashId = '';
@@ -4384,6 +4396,15 @@ function quickReceive(poId, idx, mode) {
 
 // 整单全部到货
 function quickReceiveWholePO(poId) {
+  try {
+    quickReceiveWholePOInner(poId);
+  } catch (e) {
+    toast('整单入库出错：' + (e && e.message ? e.message : '未知错误'));
+    console.error('[quickReceiveWholePO]', e);
+  }
+}
+
+function quickReceiveWholePOInner(poId) {
   const data = loadShoesV2();
   const po = (data.purchaseOrders || []).find(p => p.id === poId);
   if (!po) return;
@@ -4407,7 +4428,10 @@ function quickReceiveWholePO(poId) {
   if (n <= 0) { toast('这单已经全部到货了'); return; }
   data.inboundOrders.push(inb);
   po.status = '入库完成';
-  saveShoesV2(data);
+  if (!saveShoesV2(data)) {
+    toast('整单入库未保存：本机存储已满，请清理后重试');
+    return;
+  }
   poFlashId = poId;
   renderPurchaseOrders();
   poFlashId = '';
@@ -5485,11 +5509,27 @@ function showReceiveModal(poId) {
 }
 
 function confirmReceive(poId) {
+  try {
+    confirmReceiveInner(poId);
+  } catch (e) {
+    // 任何意外都不该让用户看到「卡住」：关掉弹窗 + 明确报错
+    try { closeModal(); } catch (e2) {}
+    toast('入库出错：' + (e && e.message ? e.message : '未知错误'));
+    console.error('[confirmReceive]', e);
+  }
+}
+
+function confirmReceiveInner(poId) {
   const data = loadShoesV2();
   const po = (data.purchaseOrders||[]).find(p => p.id === poId);
   if (!po) return;
-  const shippingFee = parseFloat(document.getElementById('recvShippingFee').value) || 0;
-  const shelf = document.getElementById('recvShelf').value.trim();
+  // 元素取不到时给兜底值，避免空指针中断整条入库流程（否则数据不保存、界面卡住）
+  const valOf = (id, def) => {
+    const el = document.getElementById(id);
+    return el ? el.value : def;
+  };
+  const shippingFee = parseFloat(valOf('recvShippingFee', po.shippingFee || 0)) || 0;
+  const shelf = String(valOf('recvShelf', '')).trim();
   const orderId = genId('in');
   const devSet = [...new Set(po.items.map(it=>it.device||po.device||'').filter(Boolean))].join(' / ');
   const inboundOrder = {
@@ -5542,8 +5582,13 @@ function confirmReceive(poId) {
   });
   if (receivedAny > 0) data.inboundOrders.push(inboundOrder);
   po.status = poHasRemaining(po) ? '部分到货' : '入库完成';
-  saveShoesV2(data);
+  const saved = saveShoesV2(data);
   closeModal();
+  if (!saved) {
+    // 保存失败（多半是存储满）：明确告知，不要静默失败让用户以为卡住
+    toast('入库未保存：本机存储已满，请清理后重试');
+    return;
+  }
   renderPurchaseOrders();
   toast(receivedAny > 0
     ? (poHasRemaining(po) ? `已入库 ${receivedAny} 双，仍有未到货，已标记部分到货` : `入库成功，本单已全部到货`)
