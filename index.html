@@ -683,6 +683,17 @@ select.input { cursor: pointer; }
 .chip-addr { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
 .chip-trk  { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
 .chip-none { background: var(--gray-1); color: var(--gray-4); border: 1px dashed var(--gray-3); font-weight: 400; }
+/* ===== 扫码区 ===== */
+.scan-card { border: 1px solid #bfdbfe !important; background: #eff6ff !important; }
+.scan-card input { background: #fff !important; }
+/* v23 价格库：输入框下方的小按钮，手机上也好点 */
+.pb-mini {
+  display: block; width: 100%; margin-top: 5px; padding: 7px 8px;
+  font-size: 11px; line-height: 1.2; font-weight: 600; color: #b45309;
+  background: #fef3c7; border: 1px solid #fde68a; border-radius: 8px;
+  cursor: pointer; text-align: center; -webkit-tap-highlight-color: transparent;
+}
+.pb-mini:active { background: #fde68a; }
 /* ===== 数量高亮徽标 ===== */
 .qty-badge { display: inline-block; background: #ede9fe; color: #6d28d9; border: 1px solid #c4b5fd;
   border-radius: 6px; padding: 0 6px; font-size: 11px; font-weight: 700; margin-left: 4px; }
@@ -1683,7 +1694,7 @@ select.input { cursor: pointer; }
     <div class="page" id="page-shoes">
       <div id="shoesMainView">
         <div class="shoes-top-bar">
-          <select class="shoes-warehouse-select" id="shoesWarehouse" onchange="renderShoesDashboard()"></select>
+          <select class="shoes-warehouse-select" id="shoesWarehouse" onchange="switchShoesTab(currentShoesTab)"></select>
           <button class="icon-btn" onclick="toast('暂无新通知')">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           </button>
@@ -1707,7 +1718,7 @@ select.input { cursor: pointer; }
         <div id="inboundFormContent"></div>
         <div class="bottom-action-bar">
           <button class="btn btn-outline btn-small-action" onclick="addInboundItem()">+ 添加商品</button>
-          <button class="btn btn-outline btn-small-action" onclick="toast('扫码功能待接入')">扫码</button>
+          <button class="btn btn-outline btn-small-action" onclick="focusInboundScan()">扫码</button>
           <button class="btn btn-green" onclick="confirmInbound()">确认入库</button>
         </div>
       </div>
@@ -1720,7 +1731,7 @@ select.input { cursor: pointer; }
         <div id="outboundFormContent"></div>
         <div class="bottom-action-bar">
           <button class="btn btn-outline btn-small-action" onclick="addOutboundItem()">+ 添加商品</button>
-          <button class="btn btn-outline btn-small-action" onclick="toast('扫码功能待接入')">扫码</button>
+          <button class="btn btn-outline btn-small-action" onclick="toast('出库扫码开发中，收货入库已支持')">扫码</button>
           <button class="btn btn-green" onclick="confirmOutbound()">确认出库</button>
         </div>
       </div>
@@ -1939,7 +1950,7 @@ select.input { cursor: pointer; }
 <script>
 
 // ===== 应用版本（改这个号 = 强制所有端刷新） =====
-const APP_VERSION = 'v20';
+const APP_VERSION = 'v24';
 
 // ===== 食物数据库 (130+) =====
 const FOOD_DB = [
@@ -3535,7 +3546,12 @@ function switchShoesTab(tab) {
 function renderShoesWarehouseSelect() {
   const data = loadShoesV2();
   const sel = document.getElementById('shoesWarehouse');
-  sel.innerHTML = data.warehouses.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  if (!sel) return;
+  const cur = sel.value || 'w1';
+  const pend = pendingStats(data.products).count;
+  sel.innerHTML = data.warehouses.map(w => `<option value="${w.id}">${w.name}</option>`).join('')
+    + `<option value="${PENDING_WH}">⏳ 待估价仓${pend ? '（' + pend + '）' : ''}</option>`;
+  sel.value = Array.prototype.some.call(sel.options, o => o.value === cur) ? cur : 'w1';
 }
 
 // 页面1: 大盘数据
@@ -3734,6 +3750,18 @@ function renderInboundForm() {
         <input type="text" class="input" value="${inboundDraft.note}" placeholder="备注" oninput="inboundDraft.note=this.value">
       </div>
     </div>
+    <div class="card scan-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:14px;font-weight:600">📷 扫码入库</span>
+        <span style="font-size:11px;color:var(--gray-4)">已登记 ${bcCount()} 个码 · <a href="javascript:void(0)" onclick="showBarcodeManager()" style="font-weight:600">管理</a></span>
+      </div>
+      <div style="display:flex;gap:6px">
+        <input type="text" class="input" id="ibScanInput" placeholder="扫码枪扫条码，或手动输入后回车" autocomplete="off" style="flex:1"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();handleInboundScan(this.value);}">
+        <button class="btn btn-outline btn-sm" onclick="startCamScan('inbound')" style="flex-shrink:0">📷</button>
+      </div>
+      <div style="font-size:11px;color:var(--gray-4);margin-top:6px">新码第一次扫会让你绑货号尺码，之后自动识别</div>
+    </div>
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0">
       <span style="font-size:15px;font-weight:600">入库明细</span>
       ${inboundDraft.items.length > 0 ? '<button class="btn btn-outline btn-sm" onclick="inboundDraft.items=[];renderInboundForm()">清空</button>' : ''}
@@ -3785,13 +3813,21 @@ function addInboundItem() {
     <h3>添加入库商品</h3>
     <div class="modal-field">
       <label>货号 / 名称（与已有货号一致将自动追加尺码）</label>
-      <input type="text" class="input" id="ibSku" list="ibSkuList" placeholder="如 AJ1黑红 / 货号">
+      <input type="text" class="input" id="ibSku" list="ibSkuList" placeholder="如 AJ1黑红 / 货号"
+        oninput="pbAutoFillInbound()" onchange="pbAutoFillInbound()">
       <datalist id="ibSkuList">${opts}</datalist>
+      <div id="pbInboundHint" style="font-size:11px;margin-top:4px"></div>
     </div>
     <div style="display:flex;gap:8px">
       <div class="modal-field" style="flex:1"><label>品牌</label><input type="text" class="input" id="ibBrand" placeholder="Nike"></div>
       <div class="modal-field" style="flex:1"><label>进货价 ¥</label><input type="number" class="input" id="ibCost" placeholder="200"></div>
-      <div class="modal-field" style="flex:1"><label>售价 ¥</label><input type="number" class="input" id="ibPrice" placeholder="450"></div>
+      <div class="modal-field" style="flex:1"><label>售价（到手）¥</label>
+        <div style="display:flex;gap:4px;align-items:center">
+          <input type="number" class="input" id="ibPrice" placeholder="450" style="flex:1;min-width:0">
+          <button type="button" class="btn btn-outline btn-sm" style="flex:0 0 auto;padding:8px 7px"
+            onclick="pbQuickFill(document.getElementById('ibSku').value,'ibPrice','','查价')">💰</button>
+        </div>
+      </div>
     </div>
     <div class="modal-field">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -3806,6 +3842,7 @@ function addInboundItem() {
     </div>
   `;
   document.getElementById('modalOverlay').classList.add('show');
+  setTimeout(pbAutoFillInbound, 0);
 }
 
 function confirmAddInboundItem() {
@@ -3850,7 +3887,7 @@ function confirmInbound() {
     if (it.isNew) {
       prod = {
         id: it.productId, sku: it.sku, name: it.name, brand: it.brand||'', condition: '全新',
-        cost: it.cost, price: it.price, status: '正常可售', shelf: inboundDraft.shelf||'', platform: inboundDraft.platform||'', device: inboundDraft.device||'', purchaseOrderNo: inboundDraft.purchaseOrderNo||'', thumb: it.thumb||null, flowLog: [], sizes: []
+        cost: it.cost, price: it.price, wh: (it.price > 0) ? 'w1' : PENDING_WH, status: '正常可售', shelf: inboundDraft.shelf||'', platform: inboundDraft.platform||'', device: inboundDraft.device||'', purchaseOrderNo: inboundDraft.purchaseOrderNo||'', thumb: it.thumb||null, flowLog: [], sizes: []
       };
       data.products.push(prod);
     } else {
@@ -3867,7 +3904,8 @@ function confirmInbound() {
       it.sizes.forEach(sr => addSizeStock(prod, sr.size, sr.qty));
       const afterQty = prodStock(prod);
       prod.cost = afterQty > 0 ? Math.round(totalCost / afterQty * 100) / 100 : it.cost;
-      if (it.price != null && it.price > 0) prod.price = it.price;
+      if (it.price != null && it.price > 0) { prod.price = it.price; settleWhAfterPrice(prod); }
+      else markPendingIfUnvalued(prod);
       const sizeNote = it.sizes.map(s=>`${s.size}码${s.qty}双`).join('，');
       prod.flowLog.push({type:'入库', time: D(), note: `采购入库 ${sizeNote} ¥${it.cost}${inboundDraft.shelf?' · 货架'+inboundDraft.shelf:''}`});
       it.sizes.forEach(sr => order.items.push({ productId: prod.id, size: sr.size, qty: sr.qty, cost: it.cost }));
@@ -4530,13 +4568,14 @@ function receiveItemIntoStock(data, po, it, qty, cost, shelf) {
   if (!prod) {
     prod = {
       id: genId('p'), sku: it.sku || it.name || '', name: it.name || it.sku || '商品', brand: '',
-      sizes: [], condition: it.condition || '全新', cost: 0, price: 0,
+      sizes: [], condition: it.condition || '全新', cost: 0, price: 0, wh: PENDING_WH,
       status: '正常可售', shelf: shelf || '', platform: po.platform, device: it.device || po.device || '',
       purchaseOrderNo: po.id, thumb: it.thumb || null, flowLog: []
     };
     data.products.push(prod);
-  } else if (it.thumb && !prod.thumb) {
-    prod.thumb = it.thumb;
+  } else {
+    if (it.thumb && !prod.thumb) prod.thumb = it.thumb;
+    markPendingIfUnvalued(prod);
   }
   const beforeQty = prodStock(prod);
   const totalCost = prod.cost * beforeQty + cost * qty;
@@ -5792,6 +5831,784 @@ function savePurchaseOrder() {
   toast(editingPurchaseId ? '采购单已更新' : '采购单已创建');
 }
 
+// ===== v21：扫码入库 =====
+// 扫码枪本质是「键盘输入 + 回车」，所以只要有个聚焦的输入框就能收；
+// 摄像头扫码走浏览器原生 BarcodeDetector（设备支持才有）。
+// 条码绑定表：shoes_v2.barcodes = { "条码": {name, size, cost} }
+
+let bcPending = { code: '', ctx: 'inbound', id: '' };
+let camScan = { stream: null, timer: null, ctx: null };
+let bcMgrKeys = [];
+
+function bcMap() {
+  const d = loadShoesV2();
+  if (!d.barcodes || typeof d.barcodes !== 'object') d.barcodes = {};
+  return d.barcodes;
+}
+function bcSaveMap(map) {
+  const d = loadShoesV2();
+  d.barcodes = map;
+  return saveShoesV2(d);
+}
+function bcLookup(code) {
+  return bcMap()[String(code || '').trim()] || null;
+}
+function bcBind(code, name, size, cost) {
+  if (!String(code || '').trim() || !String(name || '').trim()) return false;
+  const m = bcMap();
+  m[String(code).trim()] = {
+    name: String(name).trim(),
+    size: String(size || '').trim(),
+    cost: parseFloat(cost) || 0
+  };
+  return bcSaveMap(m);
+}
+function bcUnbind(code) {
+  const m = bcMap();
+  delete m[String(code).trim()];
+  return bcSaveMap(m);
+}
+function bcCount() { try { return Object.keys(bcMap()).length; } catch (e) { return 0; } }
+
+function scanFeedback(msg) {
+  toast(msg);
+  try { if (navigator.vibrate) navigator.vibrate(35); } catch (e) {}
+}
+function bcFindProduct(data, key) {
+  const k = String(key || '').trim();
+  return (data.products || []).find(p =>
+    String(p.sku || '').trim() === k || String(p.name || '').trim() === k) || null;
+}
+
+// 入库单：把「货号 + 尺码」加进去（同货号合并，同尺码累加）
+function ibAddScanned(name, size, cost) {
+  const data = loadShoesV2();
+  const key = String(name).trim();
+  const sz = String(size || '').trim();
+  const prod = bcFindProduct(data, key);
+  const item = inboundDraft.items.find(it =>
+    String(it.sku || '').trim() === key || String(it.name || '').trim() === key);
+  if (item) {
+    const row = item.sizes.find(s => String(s.size).trim() === sz);
+    if (row) row.qty = (parseInt(row.qty) || 0) + 1;
+    else item.sizes.push({ size: sz, qty: 1 });
+    if (cost && !item.cost) item.cost = cost;
+  } else if (prod) {
+    inboundDraft.items.push({
+      productId: prod.id, isNew: false, sku: prod.sku || prod.name, name: prod.name,
+      cost: cost || prod.cost || 0, price: prod.price || 0, sizes: [{ size: sz, qty: 1 }]
+    });
+  } else {
+    inboundDraft.items.push({
+      productId: genId('p'), isNew: true, sku: key, name: key, brand: '',
+      price: 0, cost: cost || 0, sizes: [{ size: sz, qty: 1 }]
+    });
+  }
+}
+
+function ibRefocusScan() {
+  const el = document.getElementById('ibScanInput');
+  if (el) { el.value = ''; try { el.focus(); } catch (e) {} }
+}
+function focusInboundScan() {
+  const el = document.getElementById('ibScanInput');
+  if (!el) { toast('打开入库单后，在「扫码入库」框里扫'); return; }
+  try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+  setTimeout(() => { try { el.focus(); } catch (e) {} }, 300);
+}
+
+function handleInboundScan(raw) {
+  const code = String(raw || '').trim();
+  if (!code) return;
+  const hit = bcLookup(code);
+  if (!hit) { showBindBarcodeModal(code, 'inbound', ''); return; }
+  ibAddScanned(hit.name, hit.size, hit.cost);
+  renderInboundForm();
+  scanFeedback('已扫：' + hit.name + (hit.size ? ' ' + hit.size : ''));
+  ibRefocusScan();
+}
+
+// ===== 采购单收货弹窗：扫码清点 =====
+function recvRefocusScan() {
+  const el = document.getElementById('recvScanInput');
+  if (el) { el.value = ''; try { el.focus(); } catch (e) {} }
+}
+function handleReceiveScan(poId, raw) {
+  const code = String(raw || '').trim();
+  if (!code) return;
+  const hit = bcLookup(code);
+  if (!hit) { showBindBarcodeModal(code, 'receive', poId); return; }
+  const data = loadShoesV2();
+  const po = (data.purchaseOrders || []).find(p => p.id === poId);
+  if (!po) return;
+  const idx = (po.items || []).findIndex(it =>
+    String(it.name || it.sku || '').trim() === String(hit.name).trim() &&
+    String(it.size || '').trim() === String(hit.size).trim() &&
+    poItemReceived(it) < (it.qty || 1));
+  if (idx < 0) {
+    toast('单子里没有待收的「' + hit.name + ' ' + hit.size + '」');
+    recvRefocusScan();
+    return;
+  }
+  const it = po.items[idx];
+  const el = document.getElementById('recvQty_' + idx);
+  if (el) {
+    const remain = (it.qty || 1) - poItemReceived(it);
+    const cur = parseInt(el.value);
+    const base = isNaN(cur) ? remain : cur;
+    el.value = Math.min(remain, Math.max(0, base) + 1);
+    el.style.background = '#dcfce7';
+    setTimeout(() => { try { el.style.background = ''; } catch (e) {} }, 700);
+  }
+  scanFeedback('已扫：' + hit.name + ' ' + hit.size);
+  recvRefocusScan();
+}
+// 扫码清点前先把数量清零：扫到几双算几双
+function recvResetAll(poId) {
+  const data = loadShoesV2();
+  const po = (data.purchaseOrders || []).find(p => p.id === poId);
+  if (!po) return;
+  (po.items || []).forEach((it, i) => {
+    const el = document.getElementById('recvQty_' + i);
+    if (el) el.value = 0;
+  });
+  toast('已清零，扫到几双算几双');
+  recvRefocusScan();
+}
+
+// ===== 新条码登记 =====
+function showBindBarcodeModal(code, ctx, ctxId) {
+  bcPending = { code: String(code || '').trim(), ctx: ctx || 'inbound', id: ctxId || '' };
+  const data = loadShoesV2();
+  const names = [...new Set((data.products || []).map(p => p.sku || p.name).filter(Boolean))];
+  const sizes = [...new Set((data.products || [])
+    .reduce((a, p) => a.concat((p.sizes || []).map(s => String(s.size || ''))), [])
+    .filter(Boolean))];
+  document.getElementById('modalContent').innerHTML = `
+    <div class="sheet-grip"></div>
+    <h3>登记新条码</h3>
+    <div style="background:var(--gray-1);padding:10px;border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--gray-5)">
+      这个码还没登记过：<b style="color:var(--blue)">${escapeHtml(bcPending.code)}</b><br>
+      绑定一次，以后扫到自动识别。
+    </div>
+    <div class="modal-field">
+      <label>货号 / 名称</label>
+      <input type="text" class="input" id="bcName" list="bcNameList" placeholder="如 AJ1黑红" autocomplete="off">
+      <datalist id="bcNameList">${names.map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>
+    </div>
+    <div style="display:flex;gap:8px">
+      <div class="modal-field" style="flex:1">
+        <label>尺码</label>
+        <input type="text" class="input" id="bcSize" list="bcSizeList" placeholder="42" autocomplete="off">
+        <datalist id="bcSizeList">${sizes.map(s => `<option value="${escapeHtml(s)}">`).join('')}</datalist>
+      </div>
+      <div class="modal-field" style="flex:1">
+        <label>进货价 选填</label>
+        <input type="number" class="input" id="bcCost" placeholder="0">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmBindBarcode()">绑定并加入</button>
+    </div>
+  `;
+  document.getElementById('modalOverlay').classList.add('show');
+  setTimeout(() => {
+    const el = document.getElementById('bcName');
+    if (el) { try { el.focus(); } catch (e) {} }
+  }, 120);
+}
+function confirmBindBarcode() {
+  const nameEl = document.getElementById('bcName');
+  const name = nameEl ? String(nameEl.value || '').trim() : '';
+  if (!name) { toast('请填货号 / 名称'); return; }
+  const sizeEl = document.getElementById('bcSize');
+  const costEl = document.getElementById('bcCost');
+  const size = sizeEl ? String(sizeEl.value || '').trim() : '';
+  const cost = costEl ? (parseFloat(costEl.value) || 0) : 0;
+  const p = bcPending;
+  if (!bcBind(p.code, name, size, cost)) {
+    toast('保存失败：本机存储可能已满，先清理再试');
+    return;
+  }
+  closeModal();
+  toast('已绑定 ' + name + (size ? ' ' + size : ''));
+  if (p.ctx === 'receive') handleReceiveScan(p.id, p.code);
+  else handleInboundScan(p.code);
+}
+
+// ===== 摄像头扫码（设备支持才有）=====
+function camScanAvailable() { return typeof window.BarcodeDetector !== 'undefined'; }
+function ensureCamBox() {
+  if (document.getElementById('camScanBox')) return;
+  const d = document.createElement('div');
+  d.id = 'camScanBox';
+  d.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:#000';
+  d.innerHTML = `
+    <video id="camScanVideo" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+    <div style="position:absolute;top:14px;right:14px">
+      <button class="btn btn-outline" onclick="stopCamScan()">关闭</button>
+    </div>
+    <div style="position:absolute;left:0;right:0;bottom:46px;text-align:center;color:#fff;font-size:13px">
+      把条码对准镜头，识别后自动填入
+    </div>`;
+  document.body.appendChild(d);
+}
+function startCamScan(ctx, ctxId) {
+  if (!camScanAvailable()) {
+    toast('这台设备不支持摄像头扫码，用扫码枪扫、或手动输入条码后回车');
+    return;
+  }
+  ensureCamBox();
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }).then(stream => {
+    camScan.stream = stream;
+    camScan.ctx = { kind: ctx || 'inbound', id: ctxId || '' };
+    const box = document.getElementById('camScanBox');
+    const v = document.getElementById('camScanVideo');
+    if (!box || !v) return;
+    box.style.display = 'block';
+    v.srcObject = stream;
+    try { v.play(); } catch (e) {}
+    const det = new window.BarcodeDetector();
+    camScan.timer = setInterval(() => {
+      if (!v.videoWidth) return;
+      det.detect(v).then(list => {
+        if (list && list.length) {
+          const code = list[0].rawValue;
+          const c = camScan.ctx || { kind: 'inbound', id: '' };
+          stopCamScan();
+          if (c.kind === 'receive') handleReceiveScan(c.id, code);
+          else handleInboundScan(code);
+        }
+      }).catch(() => {});
+    }, 400);
+  }).catch(() => { toast('打不开摄像头：请允许相机权限'); });
+}
+function stopCamScan() {
+  if (camScan.timer) clearInterval(camScan.timer);
+  if (camScan.stream) { try { camScan.stream.getTracks().forEach(t => t.stop()); } catch (e) {} }
+  camScan = { stream: null, timer: null, ctx: null };
+  const box = document.getElementById('camScanBox');
+  if (box) box.style.display = 'none';
+}
+
+// ===== 条码管理 =====
+function showBarcodeManager() {
+  const m = bcMap();
+  bcMgrKeys = Object.keys(m).sort();
+  const rows = bcMgrKeys.length ? bcMgrKeys.map((k, i) => {
+    const v = m[k] || {};
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--gray-1)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600">${escapeHtml(v.name || '')} ${escapeHtml(v.size || '')}</div>
+        <div style="font-size:11px;color:var(--gray-4)">${escapeHtml(k)}${v.cost ? ' · ¥' + v.cost : ''}</div>
+      </div>
+      <button class="icon-btn" onclick="bcRemoveByIndex(${i})">×</button>
+    </div>`;
+  }).join('') : '<div style="padding:18px 0;text-align:center;color:var(--gray-4);font-size:13px">还没登记过条码</div>';
+  document.getElementById('modalContent').innerHTML = `
+    <div class="sheet-grip"></div>
+    <h3>条码管理（${bcMgrKeys.length}）</h3>
+    <div style="font-size:12px;color:var(--gray-4);margin-bottom:10px">
+      条码 ↔ 货号尺码的对应。绑错了在这儿删掉重扫就行。
+    </div>
+    <div style="max-height:52vh;overflow:auto">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal()">关闭</button>
+    </div>
+  `;
+  document.getElementById('modalOverlay').classList.add('show');
+}
+function bcRemoveByIndex(i) {
+  const code = bcMgrKeys[i];
+  if (!code) return;
+  if (!bcUnbind(code)) { toast('删除失败：存储可能已满'); return; }
+  toast('已删除');
+  showBarcodeManager();
+}
+
+
+/* ============================================================
+   v23 · 货号价格库 + 得物到手价助手
+   设计前提（重要）：
+   得物「到手价」= 售价 − 技术服务费 − 鉴别费 − 打包费 − 运费险，
+   且费率随卖家身份/类目/活动而变，公开页面上并没有一个准确的到手价。
+   所以本模块不做网页抓取（既被风控挡、也不准），
+   而是：填一次售价 → 记住 → 以后同货号自动带出到手价。
+   ============================================================ */
+
+/* ---------- 存储层 ---------- */
+function pbKey(s) { return String(s == null ? '' : s).trim().toUpperCase().replace(/\s+/g, ''); }
+
+function pbBook() {
+  const d = loadShoesV2();
+  if (!d.priceBook || typeof d.priceBook !== 'object') d.priceBook = {};
+  return d.priceBook;
+}
+
+function pbCfg() {
+  const d = loadShoesV2();
+  if (!d.priceCfg || typeof d.priceCfg !== 'object') d.priceCfg = {};
+  const c = d.priceCfg;
+  if (typeof c.rate !== 'number') c.rate = 8;      // 综合费率 %（手续费+鉴别+打包+运费险）
+  if (typeof c.fixed !== 'number') c.fixed = 0;    // 每单固定扣费 ¥
+  if (!c.src) c.src = 'dewu';
+  return c;
+}
+
+function pbSaveCfg(patch) {
+  const d = loadShoesV2();
+  if (!d.priceCfg || typeof d.priceCfg !== 'object') d.priceCfg = {};
+  Object.assign(d.priceCfg, patch || {});
+  return saveShoesV2(d);
+}
+
+// 查价格库：先精确 key，再退化为忽略大小写/空格的模糊匹配
+function pbFind(sku) {
+  const k = pbKey(sku);
+  if (!k) return null;
+  const book = pbBook();
+  if (book[k]) return book[k];
+  const hit = Object.keys(book).find(bk => pbKey(bk) === k);
+  return hit ? book[hit] : null;
+}
+
+// 写价格库。sale=得物售价，hand=到手价（不传则按费率算）
+function pbSet(sku, sale, hand, src) {
+  const raw = String(sku == null ? '' : sku).trim();
+  const k = pbKey(raw);
+  if (!k) return false;
+  const d = loadShoesV2();
+  if (!d.priceBook || typeof d.priceBook !== 'object') d.priceBook = {};
+  d.priceBook[k] = {
+    sku: raw,
+    sale: Number(sale) || 0,
+    hand: (hand == null || isNaN(Number(hand))) ? pbHand(sale) : Number(hand),
+    src: src || (pbCfg().src) || 'dewu',
+    time: D()
+  };
+  return saveShoesV2(d);
+}
+
+function pbDel(k) {
+  const d = loadShoesV2();
+  if (!d.priceBook) return false;
+  delete d.priceBook[k];
+  return saveShoesV2(d);
+}
+
+/* ---------- 到手价换算 ---------- */
+// 到手价 = 售价 × (1 − 费率%) − 固定扣费，四舍五入到角
+function pbHand(sale, rate, fixed) {
+  const c = pbCfg();
+  const s = Number(sale) || 0;
+  const r = (rate == null ? c.rate : Number(rate)) || 0;
+  const f = (fixed == null ? c.fixed : Number(fixed)) || 0;
+  const v = s * (1 - r / 100) - f;
+  return Math.max(0, Math.round(v * 10) / 10);
+}
+
+function pbHandText(sale, rate, fixed) {
+  const h = pbHand(sale, rate, fixed);
+  const s = Number(sale) || 0;
+  const cut = Math.round((s - h) * 10) / 10;
+  if (!s) return '填入售价后自动算';
+  return `到手 ¥${h.toFixed(1)}　<span style="color:#dc2626">扣 ¥${cut.toFixed(1)}</span>`;
+}
+
+/* ---------- 一键跳转得物 ---------- */
+// 得物没有开放接口且有滑块风控，抓不到；直接把用户送到搜索页，
+// 他看到的价格就是带自己账号费率的真实行情，比抓来的公开价准。
+function pbOpenDewu(sku) {
+  const kw = String(sku == null ? '' : sku).trim();
+  if (!kw) { toast('先填货号再查'); return; }
+  const url = 'https://www.dewu.com/search?title=' + encodeURIComponent(kw);
+  const w = window.open(url, '_blank');
+  if (!w) toast('浏览器拦截了弹窗，请允许后再点');
+  else toast('得物已打开，看到价格回来填就行');
+}
+
+function pbCopySku(sku) {
+  const kw = String(sku == null ? '' : sku).trim();
+  if (!kw) { toast('没有可复制的货号'); return; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(kw).then(
+      () => toast('货号已复制：' + kw),
+      () => toast('复制失败，手动选中吧')
+    );
+  } else {
+    toast('复制失败，手动选中吧');
+  }
+}
+
+/* ---------- 查价填价面板 ----------
+   skuOrName : 货号/名称
+   targetId  : 填完要回填的输入框 id（可空）
+   pid       : 若来自库存商品，确认后直接写商品价（可空）
+   title     : 面板标题
+*/
+let pbCtx = { sku: '', targetId: '', pid: '', snap: '' };
+
+// 拍快照前必须把用户已输入的值从 property 写回 attribute，
+// 否则 innerHTML 里只有页面初始的 value，恢复后用户填的数量/价格会全部回到默认值。
+function pbSnapshotModal() {
+  const mc = document.getElementById('modalContent');
+  if (!mc) return '';
+  let list = [];
+  try { list = Array.prototype.slice.call(mc.querySelectorAll('input,textarea,select')); } catch (e) { list = []; }
+  list.forEach(function (el) {
+    try {
+      const tag = (el.tagName || '').toUpperCase();
+      if (tag === 'TEXTAREA') { el.textContent = el.value; return; }
+      const t = (el.type || '').toLowerCase();
+      if (t === 'checkbox' || t === 'radio') {
+        if (el.checked) el.setAttribute('checked', 'checked'); else el.removeAttribute('checked');
+        return;
+      }
+      el.setAttribute('value', el.value);
+    } catch (e) {}
+  });
+  return mc.innerHTML;
+}
+
+function pbQuickFill(skuOrName, targetId, pid, title) {
+  // 来源界面如果是打开着的弹窗，先拍快照，填完价原样还原，
+  // 否则（比如收货时）用户之前填的到货数量会被覆盖丢掉。
+  const mc = document.getElementById('modalContent');
+  const ov = document.getElementById('modalOverlay');
+  const shown = !!(ov && ov.classList && ov.classList.contains('show') && mc && String(mc.innerHTML).trim().length > 20);
+  pbCtx = { sku: String(skuOrName || '').trim(), targetId: targetId || '', pid: pid || '',
+            snap: shown ? pbSnapshotModal() : '' };
+  const book = pbBook();
+  const rec = pbFind(pbCtx.sku);
+  const c = pbCfg();
+  const known = Object.keys(book).length;
+  const saleVal = rec ? rec.sale : '';
+  document.getElementById('modalContent').innerHTML = `
+    <div class="sheet-grip"></div>
+    <h3>💰 ${escapeHtml(title || '查价')}</h3>
+    <div class="modal-field">
+      <label>货号 / 名称</label>
+      <input type="text" class="input" id="pbSku" value="${escapeHtml(pbCtx.sku)}" placeholder="如 DZ5485-612">
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button class="btn btn-outline btn-sm" style="flex:1" onclick="pbOpenDewu(document.getElementById('pbSku').value)">🔍 打开得物搜这个号</button>
+      <button class="btn btn-outline btn-sm" style="flex:0 0 auto" onclick="pbCopySku(document.getElementById('pbSku').value)">📋 复制</button>
+    </div>
+    <div style="display:flex;gap:8px">
+      <div class="modal-field" style="flex:2">
+        <label>得物售价 ¥</label>
+        <input type="number" class="input" id="pbSale" value="${saleVal}" placeholder="899" autofocus
+          oninput="document.getElementById('pbHandView').innerHTML=pbHandText(this.value, document.getElementById('pbRate').value, document.getElementById('pbFixed').value)">
+      </div>
+      <div class="modal-field" style="flex:1">
+        <label>费率 %</label>
+        <input type="number" class="input" id="pbRate" value="${c.rate}" step="0.5"
+          oninput="document.getElementById('pbHandView').innerHTML=pbHandText(document.getElementById('pbSale').value, this.value, document.getElementById('pbFixed').value)">
+      </div>
+      <div class="modal-field" style="flex:1">
+        <label>固定扣 ¥</label>
+        <input type="number" class="input" id="pbFixed" value="${c.fixed}" step="1"
+          oninput="document.getElementById('pbHandView').innerHTML=pbHandText(document.getElementById('pbSale').value, document.getElementById('pbRate').value, this.value)">
+      </div>
+    </div>
+    <div id="pbHandView" style="background:var(--gray-1);border-radius:8px;padding:10px;margin-bottom:12px;font-size:14px;font-weight:700">
+      ${pbHandText(saleVal, c.rate, c.fixed)}
+    </div>
+    <div style="font-size:11px;color:var(--gray-4);margin-bottom:12px">
+      到手价 = 售价 ×(1−费率)−固定扣。费率按你得物后台实际到账改一次就准了，默认 8% 是鞋类常见综合扣点。<br>
+      ${rec ? '本号上次记于 ' + escapeHtml(rec.time || '') + '，售价 ¥' + (rec.sale || 0) : '价格库已有 ' + known + ' 个货号，填过一次以后自动带出。'}
+    </div>
+    <div class="modal-actions" style="flex-wrap:wrap">
+      <button class="btn btn-outline" onclick="pbCancelFill()">取消</button>
+      <button class="btn btn-outline" onclick="showPriceBook()">价格库</button>
+      <button class="btn btn-primary" style="flex:1.4" onclick="pbConfirmFill()">用这个到手价</button>
+    </div>
+  `;
+  openModal();
+}
+
+// 取消：把来源界面原样还回去，别让用户白填
+function pbCancelFill() {
+  const snap = pbCtx.snap;
+  pbCtx = { sku: '', targetId: '', pid: '', snap: '' };
+  if (snap) {
+    document.getElementById('modalContent').innerHTML = snap;
+    return;
+  }
+  closeModal();
+}
+
+function pbConfirmFill() {
+  const sku = (document.getElementById('pbSku') || {}).value || '';
+  const saleEl = document.getElementById('pbSale');
+  const sale = saleEl ? parseFloat(saleEl.value) : NaN;
+  if (!String(sku).trim()) { toast('请填货号'); return; }
+  if (isNaN(sale) || sale <= 0) { toast('请填得物售价'); return; }
+  const rate = parseFloat((document.getElementById('pbRate') || {}).value);
+  const fixed = parseFloat((document.getElementById('pbFixed') || {}).value);
+  const hand = pbHand(sale, rate, fixed);
+
+  pbSaveCfg({ rate: isNaN(rate) ? 8 : rate, fixed: isNaN(fixed) ? 0 : fixed });
+  if (!pbSet(sku, sale, hand)) { toast('保存失败：本机存储已满'); return; }
+
+  const val = String(Math.round(hand * 100) / 100);
+  const tid = pbCtx.targetId;
+  const pid = pbCtx.pid;
+  const snap = pbCtx.snap;
+
+  // 来自库存商品：直接写入商品市场价
+  if (pid) {
+    const d = loadShoesV2();
+    const p = (d.products || []).find(x => x.id === pid);
+    if (p) {
+      p.price = hand;
+      const moved = settleWhAfterPrice(p);
+      if (!saveShoesV2(d)) { toast('商品价未保存：存储可能已满'); return; }
+      if (moved) { toast('已估价，从待估价仓回到默认仓库'); }
+    }
+  }
+
+  // 来源界面还回去，再把到手价填进对应输入框
+  if (snap) {
+    document.getElementById('modalContent').innerHTML = snap;
+    if (tid) {
+      const el = document.getElementById(tid);
+      if (el) {
+        el.value = val;
+        try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+      }
+    }
+  } else {
+    closeModal();
+  }
+  if (pid) renderShoesInventory();
+  toast(`已记 ¥${sale} → 到手 ¥${hand.toFixed(1)}，下次同货号自动带出`);
+  pbCtx = { sku: '', targetId: '', pid: '', snap: '' };
+}
+
+/* ---------- 价格库管理 ---------- */
+let pbMgrKeys = [];
+
+function showPriceBook() {
+  const book = pbBook();
+  pbMgrKeys = Object.keys(book).sort((a, b) => String(book[b].time || '').localeCompare(String(book[a].time || '')));
+  const c = pbCfg();
+  const rows = pbMgrKeys.length === 0
+    ? '<div class="empty-state">还没有记录。在入库/估价时点 💰 查价，填一次就记住了。</div>'
+    : pbMgrKeys.map((k, i) => {
+        const r = book[k];
+        return `
+          <div class="bp-row">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.sku || k)}</div>
+              <div style="font-size:10px;color:var(--gray-4)">售价 ¥${r.sale || 0} → 到手 ¥${(r.hand || 0).toFixed(1)} · ${escapeHtml(r.time || '')}</div>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="pbUseFor('${encodeURIComponent(k)}',${i})">改价</button>
+            <button class="btn btn-outline btn-sm" onclick="pbRemoveByIndex(${i})">删</button>
+          </div>`;
+      }).join('');
+
+  document.getElementById('modalContent').innerHTML = `
+    <div class="sheet-grip"></div>
+    <h3>💰 货号价格库（${pbMgrKeys.length}）</h3>
+    <div class="modal-field">
+      <label>当前换算：费率 % / 每单固定扣 ¥</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" class="input" id="pbCfgRate" value="${c.rate}" step="0.5" style="flex:1;min-width:0">
+        <input type="number" class="input" id="pbCfgFixed" value="${c.fixed}" step="1" style="flex:1;min-width:0">
+        <button class="btn btn-outline btn-sm" style="flex:0 0 auto;white-space:nowrap" onclick="pbSaveCfgFromPanel()">保存</button>
+      </div>
+      <div style="font-size:11px;color:var(--gray-4);margin-top:4px">
+        改了费率后，新填的价格按新费率算；已记录的到手价不变（点「改价」重算）。
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="btn btn-outline btn-sm" style="flex:1;white-space:nowrap" onclick="showPriceImport()">📥 批量导入</button>
+      <button class="btn btn-outline btn-sm" style="flex:1;white-space:nowrap" onclick="pbExportBook()">📤 导出</button>
+    </div>
+    <div style="max-height:46vh;overflow:auto">${rows}</div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal()">关闭</button>
+    </div>
+  `;
+  openModal();
+}
+
+function pbSaveCfgFromPanel() {
+  const r = parseFloat((document.getElementById('pbCfgRate') || {}).value);
+  const f = parseFloat((document.getElementById('pbCfgFixed') || {}).value);
+  if (!pbSaveCfg({ rate: isNaN(r) ? 8 : r, fixed: isNaN(f) ? 0 : f })) { toast('保存失败：存储可能已满'); return; }
+  toast('换算已保存');
+  showPriceBook();
+}
+
+function pbUseFor(encKey, i) {
+  const rec = pbBook()[pbMgrKeys[i]];
+  if (!rec) return;
+  pbQuickFill(rec.sku || pbMgrKeys[i], '', '', '改价');
+}
+
+function pbRemoveByIndex(i) {
+  const k = pbMgrKeys[i];
+  if (!k) return;
+  if (!pbDel(k)) { toast('删除失败：存储可能已满'); return; }
+  toast('已删除');
+  showPriceBook();
+}
+
+/* ---------- 批量导入 ----------
+   每行一条，货号与售价之间用空格 / 逗号 / 制表符 / 中文逗号分隔
+   例：DZ5485-612 899
+       DZ5485-612,899
+*/
+function showPriceImport() {
+  document.getElementById('modalContent').innerHTML = `
+    <div class="sheet-grip"></div>
+    <h3>📥 批量导入价格</h3>
+    <div style="font-size:12px;color:var(--gray-4);margin-bottom:8px">
+      每行一条「货号 售价」，空格、逗号、制表符都认。在得物批量查完价粘进来最快。<br>
+      到手价会按上面设的费率自动算。
+    </div>
+    <div class="modal-field">
+      <textarea class="input" id="pbImportText" rows="9" placeholder="DZ5485-612 899&#10;FV8106-100 1250&#10;AJ1黑红,760"></textarea>
+    </div>
+    <div id="pbImportPreview" style="font-size:12px;color:var(--gray-5);margin-bottom:10px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="showPriceBook()">返回</button>
+      <button class="btn btn-primary" style="flex:1.4" onclick="pbDoImport()">导入</button>
+    </div>
+  `;
+  openModal();
+}
+
+function pbParseLines(text) {
+  const out = [];
+  String(text || '').split(/\r?\n/).forEach(line => {
+    const t = line.trim();
+    if (!t) return;
+    // 取最后一串数字当售价，前面整段当货号（货号里可能带空格）
+    const m = t.match(/^(.*?)[\s,，\t]+([\d.]+)\s*$/);
+    if (!m) return;
+    const sku = m[1].trim();
+    const sale = parseFloat(m[2]);
+    if (!sku || isNaN(sale) || sale <= 0) return;
+    out.push({ sku, sale });
+  });
+  return out;
+}
+
+function pbDoImport() {
+  const el = document.getElementById('pbImportText');
+  const list = pbParseLines(el ? el.value : '');
+  if (!list.length) { toast('没识别到「货号 售价」格式的行'); return; }
+  const d = loadShoesV2();
+  if (!d.priceBook || typeof d.priceBook !== 'object') d.priceBook = {};
+  list.forEach(x => {
+    const k = pbKey(x.sku);
+    if (!k) return;
+    d.priceBook[k] = { sku: x.sku, sale: x.sale, hand: pbHand(x.sale), src: pbCfg().src, time: D() };
+  });
+  if (!saveShoesV2(d)) { toast('导入未保存：本机存储已满'); return; }
+  toast(`已导入 ${list.length} 个货号价格`);
+  showPriceBook();
+}
+
+function pbExportBook() {
+  const book = pbBook();
+  const keys = Object.keys(book);
+  if (!keys.length) { toast('价格库还是空的'); return; }
+  const text = keys.map(k => `${book[k].sku || k}\t${book[k].sale || 0}`).join('\n');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => toast(`已复制 ${keys.length} 条，可直接粘到表格`),
+      () => toast('复制失败')
+    );
+  } else {
+    toast('复制失败');
+  }
+}
+
+/* ---------- v24 待估价仓 ----------
+   没估价的货先进「待估价仓」，不混进默认仓库的账；
+   任何时候把市场价填上（估价/查价/入库带价），自动回默认仓库。 */
+const PENDING_WH = 'pending';
+function prodWh(p) { return (p && p.wh) || 'w1'; }        // 老数据没有 wh 字段 → 默认仓库
+function curWhId() {
+  const el = document.getElementById('shoesWarehouse');
+  return (el && el.value) ? el.value : 'w1';
+}
+function pendingStats(list) {
+  let count = 0, cost = 0;
+  (list || []).forEach(p => {
+    const st = prodStock(p);
+    if (st > 0 && isUnvalued(p)) { count++; cost += (p.cost || 0) * st; }
+  });
+  return { count, cost };
+}
+// 估价后回仓：填上了有效市场价且当前在待估价仓 → 搬回默认仓库
+function settleWhAfterPrice(p) {
+  if (p && p.price > 0 && prodWh(p) === PENDING_WH) { p.wh = 'w1'; return true; }
+  return false;
+}
+// 入库打标：这次没带价格、商品本身也没估过价 → 送进待估价仓
+function markPendingIfUnvalued(prod) {
+  if (prod && !(prod.price > 0)) prod.wh = PENDING_WH;
+}
+// 一键搬家：把散在默认仓库的老未估价货全部移入待估价仓
+function moveAllPendingToPendingWh() {
+  const data = loadShoesV2();
+  let n = 0;
+  (data.products || []).forEach(p => {
+    if (prodStock(p) > 0 && isUnvalued(p) && prodWh(p) !== PENDING_WH) { p.wh = PENDING_WH; n++; }
+  });
+  if (!n) { toast('没有需要搬家的，默认仓库很干净'); return; }
+  if (!saveShoesV2(data)) { toast('保存失败：本机存储可能已满'); return; }
+  renderShoesInventory();
+  toast('已把 ' + n + ' 件未估价移入待估价仓，默认仓库清爽了');
+}
+
+/* ---------- 各入口的自动带出 ---------- */
+
+// 入库单：填货号时自动带出到手价到 ibPrice
+function pbAutoFillInbound() {
+  const el = document.getElementById('ibSku');
+  if (!el) return;
+  const rec = pbFind(el.value);
+  const hint = document.getElementById('pbInboundHint');
+  const pEl = document.getElementById('ibPrice');
+  if (!rec) {
+    if (hint) hint.innerHTML = '';
+    return;
+  }
+  if (pEl && (!pEl.value || parseFloat(pEl.value) === 0)) pEl.value = String(rec.hand);
+  if (hint) {
+    hint.innerHTML = `<span style="color:var(--green)">✓ 价格库有这个号：售价 ¥${rec.sale} → 到手 ¥${rec.hand.toFixed(1)}（${escapeHtml(rec.time || '')}）</span>`;
+  }
+}
+
+// 收货/入库：给某一行填市场价
+function pbFillRecvPrice(i, skuOrName) {
+  pbQuickFill(skuOrName, 'recvPrice_' + i, '', '查价');
+}
+
+// 批量估价：给某个商品填价
+function pbFillProductPrice(pid) {
+  const d = loadShoesV2();
+  const p = (d.products || []).find(x => x.id === pid);
+  if (!p) return;
+  pbQuickFill(p.sku || p.name || '', '', p.id, '查价');
+}
+
+// 单个商品估价（原 prompt 方式）升级为查价面板
+function pbPriceProductPrompt(pid) {
+  const d = loadShoesV2();
+  const p = (d.products || []).find(x => x.id === pid);
+  if (!p) return;
+  pbQuickFill(p.sku || p.name || '', '', p.id, '查价 · ' + (p.name || ''));
+}
+
+
 function showFillTrackingModal(poId) {
   const data = loadShoesV2();
   const po = (data.purchaseOrders||[]).find(p => p.id === poId);
@@ -5922,6 +6739,19 @@ function showReceiveModal(poId) {
       只到了一部分？把「本次到货」改成实际数量就行，剩下的以后还能继续收。
     </div>
   `;
+  html += `
+    <div class="card scan-card" style="padding:10px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:600">📷 扫码清点</span>
+        <button class="btn btn-outline btn-sm" onclick="recvResetAll('${poId}')">清零重扫</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <input type="text" class="input" id="recvScanInput" placeholder="扫鞋盒条码，自动匹配到货" autocomplete="off" style="flex:1"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();handleReceiveScan('${poId}',this.value);}">
+        <button class="btn btn-outline btn-sm" onclick="startCamScan('receive','${poId}')">📷</button>
+      </div>
+      <div style="font-size:11px;color:var(--gray-4);margin-top:5px">每扫一双自动 +1；点「清零重扫」可以只按扫到的算</div>
+    </div>`;
   html += po.items.map((it,i) => {
     const thumbHtml = it.thumb
       ? `<img src="${it.thumb}" style="width:50px;height:50px;border-radius:8px;object-fit:cover;flex-shrink:0">`
@@ -5929,13 +6759,14 @@ function showReceiveModal(poId) {
     const recv = poItemReceived(it);
     const remain = Math.max(0, (it.qty||1) - recv);
     const dev = it.device || po.device || '-';
+    const pbRec = pbFind(it.sku || it.name || '');
     return `
       <div class="card ${isDefect(it)?'po-card-defect':''}" style="margin-bottom:8px;padding:12px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
           ${thumbHtml}
           <div style="flex:1">
-            <div style="font-size:14px;font-weight:600">${it.name||it.sku||'商品'} ${it.size||''}</div>
-            <div style="font-size:11px;color:var(--gray-4)">${it.condition||'全新'} × ${it.qty||1} · 设备：${escapeHtml(dev)}</div>
+            <div style="font-size:14px;font-weight:600" id="recvName_${i}" data-sku="${escapeHtml(it.sku||it.name||'')}">${it.name||it.sku||'商品'} ${it.size||''}</div>
+            <div style="font-size:11px;color:var(--gray-4)">${it.condition||'全新'} × ${it.qty||1} · 设备：${escapeHtml(dev)}${pbRec?' · <b style="color:var(--green)">到手 ¥'+pbRec.hand.toFixed(0)+'</b>':''}</div>
             <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap">
               <span style="font-size:11px;color:var(--gray-5)">已到货 <b>${recv}</b>/${it.qty||1}</span>
               ${poItemStatusTag(it)}
@@ -5950,8 +6781,9 @@ function showReceiveModal(poId) {
             <input type="number" class="input" id="recvCost_${i}" value="${it.cost||0}" style="font-size:13px;padding:8px 10px">
           </div>
           <div class="modal-field" style="margin-bottom:0">
-            <label style="font-size:12px;color:var(--gray-5)">市场价 选填</label>
-            <input type="number" class="input" id="recvPrice_${i}" value="" placeholder="不填=待估价" style="font-size:13px;padding:8px 10px">
+            <label style="font-size:12px;color:var(--gray-5)">市场价 到手 ${pbRec?'✓':''}</label>
+            <input type="number" class="input" id="recvPrice_${i}" value="${pbRec?pbRec.hand:''}" placeholder="不填=待估价" style="font-size:13px;padding:8px 10px">
+            <button type="button" class="pb-mini" onclick="pbFillRecvPrice(${i},document.getElementById('recvName_${i}')?document.getElementById('recvName_${i}').dataset.sku:'')">💰 用价格库的到手价</button>
           </div>
           <div class="modal-field" style="margin-bottom:0">
             <label style="font-size:12px;color:var(--gray-5)">本次到货（剩 ${remain}）</label>
@@ -6027,15 +6859,16 @@ function confirmReceiveInner(poId) {
     if (!prod) {
       prod = {
         id: genId('p'), sku: it.sku||it.name||'', name: it.name||it.sku||'商品', brand: '',
-        sizes: [], condition: it.condition||'全新', cost: 0, price: 0,
+        sizes: [], condition: it.condition||'全新', cost: 0, price: 0, wh: PENDING_WH,
         status: '正常可售', shelf: shelf, platform: po.platform, device: it.device||po.device||'',
         purchaseOrderNo: po.id, thumb: it.thumb||null, flowLog: []
       };
       data.products.push(prod);
     } else {
       if (it.thumb && !prod.thumb) prod.thumb = it.thumb;
+      markPendingIfUnvalued(prod);
     }
-    if (marketPrice > 0) prod.price = marketPrice;
+    if (marketPrice > 0) { prod.price = marketPrice; settleWhAfterPrice(prod); }
     const beforeQty = prodStock(prod);
     const totalCost = prod.cost * beforeQty + cost * qty;
     addSizeStock(prod, size, qty);
@@ -6161,14 +6994,7 @@ function promptSetPrice(pid) {
   const data = loadShoesV2();
   const p = (data.products || []).find(x => x.id === pid);
   if (!p) return;
-  const v = prompt('「' + p.name + '」市场价多少？（成本 ¥' + (p.cost || 0) + '）', p.price > 0 ? p.price : '');
-  if (v === null) return;
-  const num = parseFloat(v);
-  if (isNaN(num) || num <= 0) { toast('没填有效价格，保持待估价'); return; }
-  p.price = num;
-  saveShoesV2(data);
-  renderShoesInventory();
-  toast('已估价 ¥' + num + ' · 单利 ¥' + (num - (p.cost || 0)).toFixed(0));
+  pbPriceProductPrompt(pid);
 }
 function unitProfitLevelClass(up) {
   if (up > 100) return 'up-lv3';
@@ -6214,7 +7040,7 @@ function invCardHtml(p, data) {
 
 // 批量估价：一屏列出所有待估价商品，填一个 ✓ 一个
 function renderBatchPricing(data) {
-  const items = (data.products || []).filter(p => prodStock(p) > 0 && isUnvalued(p));
+  const items = (data.products || []).filter(p => prodStock(p) > 0 && isUnvalued(p) && prodWh(p) === curWhId());
   if (!items.length) return '<div class="empty-state">全部估完价了 🎉</div>';
   return `
     <div style="background:var(--white);border-radius:10px;padding:12px;box-shadow:var(--shadow)">
@@ -6227,9 +7053,10 @@ function renderBatchPricing(data) {
           ${productThumbHtml(p)}
           <div style="flex:1;min-width:0">
             <div style="font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.name)} <span style="font-weight:400;color:var(--gray-4)">${sizeLabel(p)}</span></div>
-            <div style="font-size:10px;color:var(--gray-4)">成本 ¥${p.cost||0} · ${prodStock(p)}双</div>
+            <div style="font-size:10px;color:var(--gray-4)">成本 ¥${p.cost||0} · ${prodStock(p)}双${pbFind(p.sku||p.name)?' · <b style="color:var(--green)">库内到手 ¥'+pbFind(p.sku||p.name).hand.toFixed(0)+'</b>':''}</div>
           </div>
-          <input type="number" class="input" id="bp_${p.id}" placeholder="市场价" style="width:86px;font-size:13px;padding:7px 9px" onkeydown="if(event.key==='Enter')saveBatchPrice('${p.id}','bp_${p.id}')">
+          <input type="number" class="input" id="bp_${p.id}" value="${pbFind(p.sku||p.name)?pbFind(p.sku||p.name).hand:''}" placeholder="市场价" style="width:78px;font-size:13px;padding:7px 9px" onkeydown="if(event.key==='Enter')saveBatchPrice('${p.id}','bp_${p.id}')">
+          <button class="btn btn-outline btn-sm" style="padding:7px 6px" onclick="pbFillProductPrice('${p.id}')">💰</button>
           <button class="btn btn-green btn-sm" onclick="saveBatchPrice('${p.id}','bp_${p.id}')">✓</button>
         </div>`).join('')}
     </div>`;
@@ -6241,19 +7068,24 @@ function saveBatchPrice(pid, inputId) {
   const num = el ? parseFloat(el.value) : NaN;
   if (!p || isNaN(num) || num <= 0) { toast('请填有效的市场价'); return; }
   p.price = num;
+  const moved = settleWhAfterPrice(p);
   saveShoesV2(data);
   renderShoesInventory();
-  toast(`已估 ¥${num} · 单利 ¥${(num - (p.cost || 0)).toFixed(0)}`);
+  toast(`已估 ¥${num} · 单利 ¥${(num - (p.cost || 0)).toFixed(0)}` + (moved ? ' · 已回默认仓库' : ''));
 }
 
 function renderShoesInventory() {
   const data = loadShoesV2();
-  const totalStock = data.products.reduce((s,p)=>s+prodStock(p),0);
-  const totalCost = data.products.reduce((s,p)=>s+p.cost*prodStock(p),0);
-  const totalEstProfit = calcTotalEstimatedProfit(data);
-  const uv = unvaluedStats(data);
+  renderShoesWarehouseSelect();
+  const whId = curWhId();
+  const isPend = whId === PENDING_WH;
+  const whProducts = data.products.filter(p => prodWh(p) === whId);
+  const totalStock = whProducts.reduce((s,p)=>s+prodStock(p),0);
+  const totalCost = whProducts.reduce((s,p)=>s+p.cost*prodStock(p),0);
+  const totalEstProfit = whProducts.reduce((s,p)=>s+calcProductEstimatedProfit(p),0);
+  const uv = pendingStats(whProducts);
 
-  let products = data.products;
+  let products = whProducts;
   if (inventoryFilter === '在售') products = products.filter(p=>p.status==='正常可售' && prodStock(p)>0);
   else if (inventoryFilter === '微瑕') products = products.filter(p => data.defects.some(d=>d.productId===p.id && d.status!=='处理完成'));
   else if (inventoryFilter === '已售出') products = products.filter(p=>prodStock(p)<=0);
@@ -6282,13 +7114,18 @@ function renderShoesInventory() {
           <option value="unitAsc" ${inventorySort==='unitAsc'?'selected':''}>单利 低→高</option>
         </select>
       </div>
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <button class="btn btn-outline btn-sm" style="flex:1" onclick="showPriceBook()">💰 货号价格库</button>
+        <button class="btn btn-outline btn-sm" style="flex:1" onclick="batchPricingOn=true;renderShoesInventory()">⚡ 批量估价</button>
+      </div>
       <div class="shoes-mini-row">
         <div class="shoes-mini-item"><div class="ml">在仓</div><div class="mv">${totalStock}双</div></div>
         <div class="shoes-mini-item"><div class="ml">占压资金</div><div class="mv">¥${totalCost.toFixed(0)}</div></div>
         <div class="shoes-mini-item"><div class="ml">预估利润</div><div class="mv ${totalEstProfit>=0?'green':'red'}">${totalEstProfit>=0?'+':''}¥${totalEstProfit.toFixed(0)}</div></div>
         <div class="shoes-mini-item"><div class="ml">待估价</div><div class="mv" style="${uv.count?'color:#b45309':''}">${uv.count}件</div></div>
       </div>
-      ${uv.count ? `<div class="po-defect-alert" style="background:#fffbeb;border-color:#fde68a;color:#b45309;margin-top:8px" onclick="inventoryFilter='待估价';batchPricingOn=false;renderShoesInventory()">🏷 <b>${uv.count}</b> 件未估价（压货 ¥${uv.cost.toFixed(0)}）利润未计入，点这里去估价 →</div>` : ''}
+      ${isPend ? `<div style="background:var(--blue-bg);color:var(--blue);padding:10px 12px;border-radius:8px;margin-top:8px;font-size:12px;line-height:1.5">⏳ <b>待估价仓</b>：没填市场价的货先放这儿，不占默认仓库的账。<br>估完价的会<b>自动回到默认仓库</b>，直接点下面 ⚡ 批量估价就行。</div>` : ''}
+      ${uv.count ? `<div class="po-defect-alert" style="background:#fffbeb;border-color:#fde68a;color:#b45309;margin-top:8px" onclick="inventoryFilter='待估价';batchPricingOn=false;renderShoesInventory()">🏷 <b>${uv.count}</b> 件未估价（压货 ¥${uv.cost.toFixed(0)}）利润未计入，点这里去估价 →${isPend ? '' : '<span style="display:inline-block;background:#fff;border:1px solid #fde68a;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;margin-left:6px" onclick="event.stopPropagation();moveAllPendingToPendingWh()">📦 移入待估价仓</span>'}</div>` : ''}
       <div id="invList">
         ${batchPricingOn && inventoryFilter === '待估价' ? renderBatchPricing(data) :
           (products.length === 0 ? '<div class="empty-state">暂无商品</div>' : products.map(p => invCardHtml(p, data)).join(''))}
@@ -6304,7 +7141,9 @@ function filterInventory() {
   const q = (invSearchTerm || '').toLowerCase().trim();
   const data = loadShoesV2();
   batchPricingOn = false;
-  let products = data.products;
+  const whId = curWhId();
+  const isPend = whId === PENDING_WH;
+  let products = data.products.filter(p => prodWh(p) === whId);
   if (inventoryFilter === '在售') products = products.filter(p=>p.status==='正常可售' && prodStock(p)>0);
   else if (inventoryFilter === '微瑕') products = products.filter(p => data.defects.some(d=>d.productId===p.id && d.status!=='处理完成'));
   else if (inventoryFilter === '已售出') products = products.filter(p=>prodStock(p)<=0);
