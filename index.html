@@ -2622,10 +2622,9 @@ function openStoragePanel() {
       ${top}
     </div>
 
-    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#b45309">
-      📷 商品图片共 <b>${img.count}</b> 张，占 <b>${fmtSize(img.bytes)}</b>
-      ${img.count ? '<br>这是还留在 localStorage 里的老图，稍后会自动搬到独立图片库' : ''}
-    </div>
+    ${img.count ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#b45309">
+      📷 还有 ${img.count} 张老图占着 localStorage（共 <b>${fmtSize(img.bytes)}</b>），稍后会自动搬进独立图片库
+    </div>` : ''}
 
     <div style="background:var(--blue-bg);border:1px solid #bfdbfe;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--blue)" id="imgCapBox">
       📦 正在统计独立图片库…
