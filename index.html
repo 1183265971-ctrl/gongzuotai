@@ -1950,7 +1950,7 @@ select.input { cursor: pointer; }
 <script>
 
 // ===== 应用版本（改这个号 = 强制所有端刷新） =====
-const APP_VERSION = 'v24';
+const APP_VERSION = 'v25';
 
 // ===== 食物数据库 (130+) =====
 const FOOD_DB = [
@@ -2231,11 +2231,11 @@ function reclaimImages() {
     const data = loadShoesV2();
     let n = 0, bytes = 0;
     (data.products || []).forEach(p => {
-      if (p.thumb) { bytes += p.thumb.length; p.thumb = null; n++; }
+      if (p.thumb && !thumbIsIdb(p.thumb)) { bytes += p.thumb.length; p.thumb = null; n++; }
     });
     (data.purchaseOrders || []).forEach(po => {
       (po.items || []).forEach(it => {
-        if (it.thumb) { bytes += it.thumb.length; it.thumb = null; n++; }
+        if (it.thumb && !thumbIsIdb(it.thumb)) { bytes += it.thumb.length; it.thumb = null; n++; }
       });
     });
     if (!n) return 0;
@@ -2567,12 +2567,13 @@ function storageBreakdown() {
 function imageUsage() {
   const data = loadShoesV2();
   let count = 0, bytes = 0;
+  const big = t => t && !thumbIsIdb(t);          // idb: 引用只占几十字节，不算大头
   (data.products || []).forEach(p => {
-    if (p.thumb) { count++; bytes += (p.thumb.length) * 2; }
+    if (big(p.thumb)) { count++; bytes += (p.thumb.length) * 2; }
   });
   (data.purchaseOrders || []).forEach(po => {
     (po.items || []).forEach(it => {
-      if (it.thumb) { count++; bytes += (it.thumb.length) * 2; }
+      if (big(it.thumb)) { count++; bytes += (it.thumb.length) * 2; }
     });
   });
   return { count, bytes };
@@ -2623,7 +2624,11 @@ function openStoragePanel() {
 
     <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#b45309">
       📷 商品图片共 <b>${img.count}</b> 张，占 <b>${fmtSize(img.bytes)}</b>
-      ${img.count ? '<br>图片是空间主要占用，清理后可立刻腾出空间' : ''}
+      ${img.count ? '<br>这是还留在 localStorage 里的老图，稍后会自动搬到独立图片库' : ''}
+    </div>
+
+    <div style="background:var(--blue-bg);border:1px solid #bfdbfe;border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--blue)" id="imgCapBox">
+      📦 正在统计独立图片库…
     </div>
 
     <button class="btn btn-block btn-primary" onclick="cleanupImages()">🧹 清理图片腾空间（保留商品数据）</button>
@@ -2631,21 +2636,31 @@ function openStoragePanel() {
     <button class="btn btn-block btn-outline" onclick="closeModal();openBackupModal()">← 返回备份面板</button>
   `;
   document.getElementById('modalOverlay').classList.add('show');
+  setTimeout(function () {
+    const box = document.getElementById('imgCapBox');
+    if (!box) return;
+    imgCapacityText(function (txt) { box.innerHTML = txt; });
+  }, 60);
 }
 
 // 清理图片：只删图片，商品名/数量/成本/单号全部保留
 function cleanupImages() {
-  const data = loadShoesV2();
   const img = imageUsage();
-  if (!img.count) { toast('没有图片可以清理'); return; }
-  if (!confirm(`将删除 ${img.count} 张商品图片，可腾出约 ${fmtSize(img.bytes)}。\n\n商品数据（名称/数量/成本/单号）全部保留，只清图片。\n\n确定继续？`)) return;
-  (data.products || []).forEach(p => { p.thumb = null; });
-  (data.purchaseOrders || []).forEach(po => {
-    (po.items || []).forEach(it => { it.thumb = null; });
+  imgStats().then(function (st) {
+    const total = img.count + st.count;
+    const bytes = img.bytes + st.bytes;
+    if (!total) { toast('没有图片可以清理'); return; }
+    if (!confirm(`将删除 ${total} 张商品图片，可腾出约 ${fmtSize(bytes)}。\n\n商品数据（名称/数量/成本/单号）全部保留，只清图片。\n\n确定继续？`)) return;
+    const data = loadShoesV2();
+    (data.products || []).forEach(p => { p.thumb = null; });
+    (data.purchaseOrders || []).forEach(po => {
+      (po.items || []).forEach(it => { it.thumb = null; });
+    });
+    if (!saveShoesV2(data)) { toast('清理失败，请重试'); return; }
+    imgClearAll();
+    toast(`已清理 ${total} 张图片，腾出 ${fmtSize(bytes)}`);
+    openStoragePanel();
   });
-  if (!saveShoesV2(data)) { toast('清理失败，请重试'); return; }
-  toast(`已清理 ${img.count} 张图片，腾出 ${fmtSize(img.bytes)}`);
-  openStoragePanel();
 }
 
 // 清理备份快照
@@ -3777,7 +3792,7 @@ function renderInboundForm() {
           return `<div class="product-item">
             <label class="img-upload-btn" style="display:flex;width:48px;height:48px;border:1px dashed var(--gray-3);border-radius:10px;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;flex-shrink:0" onclick="event.stopPropagation()">
               <input type="file" accept="image/*" style="display:none" onchange="uploadInboundImg(this, ${i})">
-              ${thumbSrc ? `<img src="${thumbSrc}" style="width:100%;height:100%;object-fit:cover">` : '<span style="font-size:18px;color:var(--gray-4)">+</span>'}
+              ${thumbSrc ? thumbImgHtml(thumbSrc, 'width:100%;height:100%;object-fit:cover') : '<span style="font-size:18px;color:var(--gray-4)">+</span>'}
             </label>
             <div class="product-info">
               <div class="pn">${prod ? prod.name : (it.name || '新商品')}${it.isNew ? ' <span class="tag tag-orange" style="font-size:10px">新货号</span>' : ''}</div>
@@ -3923,38 +3938,28 @@ function uploadShoeImg(input, productId) {
   const file = input.files[0];
   if (!file) return;
   showLoading();
-  const reader = new FileReader();
-  reader.onerror = hideLoading;
-  reader.onload = function(e) {
-    const img = new Image();
-    img.onload = function() {
-      const canvas = document.createElement('canvas');
-      const maxW = 300;
-      const scale = Math.min(maxW / img.width, maxW / img.height, 1);
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      const thumb = canvas.toDataURL('image/jpeg', 0.7);
-      const data = loadShoesV2();
-      const p = data.products.find(p => p.id === productId);
-      if (p) { p.thumb = thumb; saveShoesV2(data); }
-      const imgEl = document.getElementById('img-' + productId);
-      if (imgEl) { imgEl.src = thumb; imgEl.style.display = 'block'; }
-      const plusEl = document.getElementById('plus-' + productId);
-      if (plusEl) plusEl.style.display = 'none';
-      hideLoading();
-      toast('图片已上传');
-    };
-    img.onerror = hideLoading;
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
+  compressToBlob(file, IMG_MAX_W, IMG_QUALITY).then(saveThumbBlob).then(function (thumb) {
+    if (!thumb) { hideLoading(); toast('图片处理失败，请换一张试试'); return; }
+    const data = loadShoesV2();
+    const p = data.products.find(x => x.id === productId);
+    if (p) { replaceThumb(p.thumb, thumb); p.thumb = thumb; saveShoesV2(data); }
+    const imgEl = document.getElementById('img-' + productId);
+    if (imgEl) { imgEl.setAttribute('data-thumb', thumb); imgEl.removeAttribute('data-loaded'); imgEl.style.display = 'block'; }
+    const plusEl = document.getElementById('plus-' + productId);
+    if (plusEl) plusEl.style.display = 'none';
+    hideLoading();
+    hydrateThumbs();
+    toast('图片已上传');
+  }).catch(function (e) {
+    hideLoading();
+    toast('图片处理失败：' + (e && e.message ? e.message : '未知错误'));
+  });
 }
 
 function productThumbHtml(prod, size) {
   const s = size || 48;
   if (prod && prod.thumb) {
-    return `<img class="zoomable" src="${prod.thumb}" style="width:${s}px;height:${s}px;border-radius:10px;object-fit:cover;flex-shrink:0;cursor:zoom-in">`;
+    return thumbImgHtml(prod.thumb, `width:${s}px;height:${s}px;border-radius:10px;object-fit:cover;flex-shrink:0;cursor:zoom-in`, 'zoomable');
   }
   return `<div class="product-thumb" style="width:${s}px;height:${s}px">👟</div>`;
 }
@@ -3963,31 +3968,24 @@ function uploadInboundImg(input, itemIndex) {
   const file = input.files[0];
   if (!file) return;
   showLoading();
-  const reader = new FileReader();
-  reader.onerror = hideLoading;
-  reader.onload = function(e) {
-    const img = new Image();
-    img.onload = function() {
-      const canvas = document.createElement('canvas');
-      const maxW = 300;
-      const scale = Math.min(maxW / img.width, maxW / img.height, 1);
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      const thumb = canvas.toDataURL('image/jpeg', 0.7);
-      inboundDraft.items[itemIndex].thumb = thumb;
-      const data = loadShoesV2();
-      const it = inboundDraft.items[itemIndex];
-      const prod = data.products.find(p => p.id === it.productId);
-      if (prod) { prod.thumb = thumb; saveShoesV2(data); }
-      renderInboundForm();
-      hideLoading();
-      toast('图片已上传');
-    };
-    img.onerror = hideLoading;
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
+  compressToBlob(file, IMG_MAX_W, IMG_QUALITY).then(saveThumbBlob).then(function (thumb) {
+    if (!thumb) { hideLoading(); toast('图片处理失败，请换一张试试'); return; }
+    const prev = inboundDraft.items[itemIndex] ? inboundDraft.items[itemIndex].thumb : null;
+    replaceThumb(prev, thumb);
+    inboundDraft.items[itemIndex].thumb = thumb;
+    const data = loadShoesV2();
+    const it = inboundDraft.items[itemIndex];
+    const prod = data.products.find(p => p.id === it.productId);
+    if (prod && it.thumb) { replaceThumb(prod.thumb, it.thumb); prod.thumb = it.thumb; }
+    saveShoesV2(data);
+    hideLoading();
+    renderInboundForm();
+    hydrateThumbs();
+    toast('图片已上传');
+  }).catch(function (e) {
+    hideLoading();
+    toast('图片处理失败：' + (e && e.message ? e.message : '未知错误'));
+  });
 }
 
 // 页面3: 创建出库单
@@ -5143,7 +5141,7 @@ function poApplyThumbToRows(gi) {
 // 商品头卡片
 function poItemCardHtml(it, i) {
   const thumbHtml = it.thumb
-    ? `<img src="${it.thumb}" style="width:44px;height:44px;border-radius:8px;object-fit:cover">`
+    ? thumbImgHtml(it.thumb, 'width:44px;height:44px;border-radius:8px;object-fit:cover')
     : '<span style="font-size:18px;color:var(--gray-4)">+</span>';
   const rows = it.rows || [];
   const t = poGroupTotals(it);
@@ -5656,7 +5654,7 @@ function renderPurchaseHistoryList() {
   if (!el) return;
   el.innerHTML = list.length === 0 ? '<div class="empty-state">没有匹配的商品</div>' :
     list.map((x, i) => `<div class="ph-item" onclick="applyHistoryItemAt(${i})">
-      ${x.thumb ? `<img src="${x.thumb}" style="width:36px;height:36px;border-radius:6px;object-fit:cover;flex-shrink:0">` : '<div style="width:36px;height:36px;border-radius:6px;background:var(--gray-1);display:flex;align-items:center;justify-content:center;flex-shrink:0">👟</div>'}
+      ${x.thumb ? thumbImgHtml(x.thumb, 'width:36px;height:36px;border-radius:6px;object-fit:cover;flex-shrink:0') : '<div style="width:36px;height:36px;border-radius:6px;background:var(--gray-1);display:flex;align-items:center;justify-content:center;flex-shrink:0">👟</div>'}
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:500">${escapeHtml(x.name)}</div>
         <div style="font-size:11px;color:var(--gray-4)">${x.size ? x.size + '码 · ' : ''}¥${x.cost || 0} · ${x.condition || '全新'}</div>
@@ -5702,34 +5700,24 @@ function addPurchaseItem() {
 function uploadPurchaseImg(input, itemIndex) {
   const file = input.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onerror = function() { toast('图片读取失败，请换一张试试'); };
-  reader.onload = function(e) {
-    const img = new Image();
-    img.onerror = function() { toast('图片格式不支持，请换一张试试'); };
-    img.onload = function() {
-      try {
-        const canvas = document.createElement('canvas');
-        const maxW = 240;                 // 压到 240px，约为原尺寸的 1/3 体积
-        const scale = Math.min(maxW / img.width, maxW / img.height, 1);
-        canvas.width = Math.max(1, Math.round(img.width * scale));
-        canvas.height = Math.max(1, Math.round(img.height * scale));
-        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        const thumb = canvas.toDataURL('image/jpeg', 0.6);
-        purchaseDraft.items[itemIndex].thumb = thumb;
-        // 图片属于该商品，同步到其所有子条目，收货入库时跟着走
-        if (Array.isArray(purchaseDraft.items[itemIndex].rows)) {
-          purchaseDraft.items[itemIndex].rows.forEach(r => { r.thumb = thumb; });
-        }
-        renderPurchaseModal();
-        toast('图片已添加');
-      } catch (err) {
-        toast('图片处理失败：' + (err && err.message ? err.message : '未知错误'));
-      }
-    };
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
+  showLoading();
+  compressToBlob(file, IMG_MAX_W, IMG_QUALITY).then(saveThumbBlob).then(function (thumb) {
+    hideLoading();
+    if (!thumb) { toast('图片处理失败，请换一张试试'); return; }
+    const prev = purchaseDraft.items[itemIndex] ? purchaseDraft.items[itemIndex].thumb : null;
+    replaceThumb(prev, thumb);
+    purchaseDraft.items[itemIndex].thumb = thumb;
+    // 图片属于该商品，同步到其所有子条目，收货入库时跟着走
+    if (Array.isArray(purchaseDraft.items[itemIndex].rows)) {
+      purchaseDraft.items[itemIndex].rows.forEach(r => { r.thumb = thumb; });
+    }
+    renderPurchaseModal();
+    hydrateThumbs();
+    toast('图片已添加');
+  }).catch(function (err) {
+    hideLoading();
+    toast('图片处理失败：' + (err && err.message ? err.message : '未知错误'));
+  });
 }
 
 // 校验采购草稿：每个商品至少要有一行有效明细
@@ -6529,6 +6517,314 @@ function pbExportBook() {
   }
 }
 
+/* ============================================================
+   v25 · 图片独立仓库（IndexedDB）
+   问题：图片以前是 base64 塞进 localStorage，而 JS 字符串按 UTF-16 存，
+        实际占用 = 字符串长度 ×2，一张 30KB 的图要吃 60KB，5MB 限额存百来张就爆。
+   解决：图片二进制搬进 IndexedDB（额度是磁盘级的，几百 MB 起），
+        localStorage 里只留一个几十字节的 id，容量问题从根上解决。
+   ============================================================ */
+
+const IMG_DB = 'wb_imgs';
+const IMG_STORE = 'imgs';
+const IMG_PREFIX = 'idb:';
+const IMG_MAX_W = 420;      // 空间不再紧张，可以放宽
+const IMG_QUALITY = 0.75;
+
+let _imgDb = null;
+let _imgDbBroken = false;
+const _imgUrlCache = new Map();   // imgId -> objectURL（复用，避免重复读库）
+
+function thumbIsIdb(t) { return typeof t === 'string' && t.indexOf(IMG_PREFIX) === 0; }
+function thumbId(t) { return thumbIsIdb(t) ? t.slice(IMG_PREFIX.length) : ''; }
+
+/* ---------- IndexedDB 基础 ---------- */
+function imgDbOpen() {
+  return new Promise(function (resolve, reject) {
+    if (_imgDb) return resolve(_imgDb);
+    if (_imgDbBroken || !window.indexedDB) return reject(new Error('no-idb'));
+    let req;
+    try { req = indexedDB.open(IMG_DB, 1); } catch (e) { _imgDbBroken = true; return reject(e); }
+    req.onupgradeneeded = function () {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IMG_STORE)) db.createObjectStore(IMG_STORE);
+    };
+    req.onsuccess = function () { _imgDb = req.result; resolve(_imgDb); };
+    req.onerror = function () { _imgDbBroken = true; reject(req.error || new Error('idb-open-fail')); };
+  });
+}
+
+function imgPut(id, blob) {
+  return imgDbOpen().then(db => new Promise(function (res, rej) {
+    let tx;
+    try { tx = db.transaction(IMG_STORE, 'readwrite'); } catch (e) { return rej(e); }
+    tx.objectStore(IMG_STORE).put(blob, id);
+    tx.oncomplete = function () { res(id); };
+    tx.onerror = function () { rej(tx.error || new Error('put-fail')); };
+    tx.onabort = function () { rej(tx.error || new Error('put-abort')); };
+  }));
+}
+
+function imgGetBlob(id) {
+  return imgDbOpen().then(db => new Promise(function (res, rej) {
+    let tx;
+    try { tx = db.transaction(IMG_STORE, 'readonly'); } catch (e) { return rej(e); }
+    const r = tx.objectStore(IMG_STORE).get(id);
+    r.onsuccess = function () { res(r.result || null); };
+    r.onerror = function () { rej(r.error || new Error('get-fail')); };
+  }));
+}
+
+function imgDel(id) {
+  if (!id) return Promise.resolve(false);
+  try { const u = _imgUrlCache.get(id); if (u) { URL.revokeObjectURL(u); _imgUrlCache.delete(id); } } catch (e) {}
+  return imgDbOpen().then(db => new Promise(function (res) {
+    let tx;
+    try { tx = db.transaction(IMG_STORE, 'readwrite'); } catch (e) { return res(false); }
+    tx.objectStore(IMG_STORE).delete(id);
+    tx.oncomplete = function () { res(true); };
+    tx.onerror = function () { res(false); };
+  })).catch(() => false);
+}
+
+// 列出全部图片 id + 体积
+function imgStats() {
+  return imgDbOpen().then(db => new Promise(function (res) {
+    let tx;
+    try { tx = db.transaction(IMG_STORE, 'readonly'); } catch (e) { return res({ count: 0, bytes: 0 }); }
+    const store = tx.objectStore(IMG_STORE);
+    const req = store.openCursor();
+    let count = 0, bytes = 0;
+    req.onsuccess = function (e) {
+      const cur = e.target.result;
+      if (cur) {
+        count++;
+        const v = cur.value;
+        bytes += (v && v.size) ? v.size : (v && v.length ? v.length : 0);
+        cur.continue();
+      } else {
+        res({ count: count, bytes: bytes });
+      }
+    };
+    req.onerror = function () { res({ count: count, bytes: bytes }); };
+  })).catch(() => ({ count: 0, bytes: 0 }));
+}
+
+function imgClearAll() {
+  return imgDbOpen().then(db => new Promise(function (res) {
+    let tx;
+    try { tx = db.transaction(IMG_STORE, 'readwrite'); } catch (e) { return res(0); }
+    tx.objectStore(IMG_STORE).clear();
+    tx.oncomplete = function () {
+      _imgUrlCache.forEach(u => { try { URL.revokeObjectURL(u); } catch (e) {} });
+      _imgUrlCache.clear();
+      res(1);
+    };
+    tx.onerror = function () { res(0); };
+  })).catch(() => 0);
+}
+
+/* ---------- Blob / DataURL 互转 ---------- */
+function dataURLtoBlob(dataUrl) {
+  try {
+    const parts = String(dataUrl).split(',');
+    if (parts.length < 2) return null;
+    const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+    const bin = atob(parts[1]);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  } catch (e) { return null; }
+}
+
+function blobToDataURL(blob) {
+  return new Promise(function (res, rej) {
+    try {
+      const r = new FileReader();
+      r.onload = function () { res(r.result); };
+      r.onerror = function () { rej(new Error('read-fail')); };
+      r.readAsDataURL(blob);
+    } catch (e) { rej(e); }
+  });
+}
+
+/* ---------- 压缩：直接产出 Blob，不再转 base64 ---------- */
+function compressToBlob(file, maxW, quality) {
+  return new Promise(function (resolve, reject) {
+    const reader = new FileReader();
+    reader.onerror = function () { reject(new Error('读取失败')); };
+    reader.onload = function (e) {
+      const img = new Image();
+      img.onerror = function () { reject(new Error('格式不支持')); };
+      img.onload = function () {
+        try {
+          const canvas = document.createElement('canvas');
+          const mw = maxW || IMG_MAX_W;
+          const scale = Math.min(mw / img.width, mw / img.height, 1);
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          if (canvas.toBlob) {
+            canvas.toBlob(function (b) {
+              if (b) resolve(b);
+              else resolve(dataURLtoBlob(canvas.toDataURL('image/jpeg', quality || IMG_QUALITY)));
+            }, 'image/jpeg', quality || IMG_QUALITY);
+          } else {
+            resolve(dataURLtoBlob(canvas.toDataURL('image/jpeg', quality || IMG_QUALITY)));
+          }
+        } catch (err) { reject(err); }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------- 存图：优先 IndexedDB，失败降级回 dataURL ---------- */
+function saveThumbBlob(blob) {
+  const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  return imgPut(id, blob).then(function () {
+    try { _imgUrlCache.set(id, URL.createObjectURL(blob)); } catch (e) {}
+    return IMG_PREFIX + id;
+  }).catch(function () {
+    // 隐私模式等场景下 IndexedDB 不可用 → 退回老方式，功能不丢
+    return blobToDataURL(blob).catch(() => null);
+  });
+}
+
+/* ---------- 取图 URL（带内存缓存） ---------- */
+function imgUrl(id) {
+  if (!id) return Promise.resolve(null);
+  if (_imgUrlCache.has(id)) return Promise.resolve(_imgUrlCache.get(id));
+  return imgGetBlob(id).then(function (b) {
+    if (!b) return null;
+    let u = null;
+    try { u = URL.createObjectURL(b); _imgUrlCache.set(id, u); } catch (e) {}
+    return u;
+  }).catch(() => null);
+}
+
+// 换图时把旧图删掉，别留垃圾
+function replaceThumb(oldThumb, newThumb) {
+  if (oldThumb && thumbIsIdb(oldThumb) && oldThumb !== newThumb) {
+    imgDel(thumbId(oldThumb));
+  }
+}
+
+/* ---------- 渲染：占位 + 异步填充 ---------- */
+function thumbImgHtml(thumb, style, cls) {
+  if (!thumb) return '';
+  const c = cls ? 'class="' + cls + '"' : '';
+  if (thumbIsIdb(thumb)) {
+    return `<img ${c} alt="" data-thumb="${thumb}" style="${style};background:var(--gray-1)">`;
+  }
+  return `<img ${c} alt="" src="${thumb}" style="${style}">`;
+}
+
+let _hydrateTimer = null;
+function hydrateThumbs() {
+  const els = document.querySelectorAll('img[data-thumb]');
+  for (let i = 0; i < els.length; i++) {
+    const el = els[i];
+    const t = el.getAttribute('data-thumb');
+    if (!t) continue;
+    if (!thumbIsIdb(t)) {                       // 老 base64：直接填
+      el.src = t;
+      el.removeAttribute('data-thumb');
+      continue;
+    }
+    const id = thumbId(t);
+    if (el.getAttribute('data-loaded') === id) continue;
+    el.setAttribute('data-loaded', id);
+    (function (el2, id2) {
+      imgUrl(id2).then(function (u) {
+        if (u && el2.isConnected) { el2.src = u; }
+      });
+    })(el, id);
+  }
+}
+function scheduleHydrate() {
+  if (_hydrateTimer) return;
+  _hydrateTimer = setTimeout(function () { _hydrateTimer = null; hydrateThumbs(); }, 30);
+}
+
+// 任何列表渲染完都会触发：DOM 一变就补图，不用在每个渲染函数末尾手动调
+if (typeof MutationObserver !== 'undefined') {
+  try {
+    const _obs = new MutationObserver(scheduleHydrate);
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('DOMContentLoaded', function () {
+        try { _obs.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+        hydrateThumbs();
+      });
+    }
+  } catch (e) {}
+}
+
+/* ---------- 老数据迁移：把 localStorage 里的 base64 搬进 IndexedDB ---------- */
+function migrateThumbsToIdb() {
+  const data = loadShoesV2();
+  const jobs = [];
+  function conv(obj) {
+    if (!obj || !obj.thumb) return;
+    if (thumbIsIdb(obj.thumb)) return;
+    if (String(obj.thumb).indexOf('data:image') !== 0) return;
+    const blob = dataURLtoBlob(obj.thumb);
+    if (!blob) return;
+    const oldSize = String(obj.thumb).length * 2;
+    jobs.push(saveThumbBlob(blob).then(function (t) {
+      if (!t) return 0;
+      obj.thumb = t;
+      return oldSize;                 // 返回腾出来的字节数
+    }).catch(() => 0));
+  }
+  (data.products || []).forEach(conv);
+  (data.purchaseOrders || []).forEach(function (po) {
+    (po.items || []).forEach(conv);
+  });
+  if (!jobs.length) return Promise.resolve({ n: 0, bytes: 0 });
+  return Promise.all(jobs).then(function (sizes) {
+    const ok = sizes.filter(s => s > 0);
+    const bytes = ok.reduce((a, b) => a + b, 0);
+    if (ok.length) {
+      saveShoesV2(data);              // 这一步会释放大量 localStorage 空间
+      hydrateThumbs();
+    }
+    return { n: ok.length, bytes: bytes };
+  }).catch(() => ({ n: 0, bytes: 0 }));
+}
+
+// 启动后静默跑一次迁移，搬完提示省了多少空间
+function autoMigrateThumbs() {
+  setTimeout(function () {
+    migrateThumbsToIdb().then(function (r) {
+      if (r && r.n > 0) {
+        toast('已把 ' + r.n + ' 张图片搬到独立图片库，省出约 ' + fmtSize(r.bytes));
+      }
+    });
+  }, 2000);
+}
+
+/* ---------- 容量概览（异步） ---------- */
+function imgCapacityText(cb) {
+  imgStats().then(function (st) {
+    let txt = '📷 图片 <b>' + st.count + '</b> 张，占 <b>' + fmtSize(st.bytes) + '</b>（存在独立图片库，不占 localStorage）';
+    if (navigator.storage && navigator.storage.estimate) {
+      navigator.storage.estimate().then(function (e) {
+        if (e && e.quota) {
+          const used = e.usage || 0;
+          const pct = Math.round(used / e.quota * 100);
+          txt += '<br>本机已用 ' + fmtSize(used) + ' / 可用 ' + fmtSize(e.quota) + '（' + pct + '%）';
+        }
+        cb(txt);
+      }).catch(function () { cb(txt); });
+    } else {
+      cb(txt);
+    }
+  });
+}
+
+
 /* ---------- v24 待估价仓 ----------
    没估价的货先进「待估价仓」，不混进默认仓库的账；
    任何时候把市场价填上（估价/查价/入库带价），自动回默认仓库。 */
@@ -6754,7 +7050,7 @@ function showReceiveModal(poId) {
     </div>`;
   html += po.items.map((it,i) => {
     const thumbHtml = it.thumb
-      ? `<img src="${it.thumb}" style="width:50px;height:50px;border-radius:8px;object-fit:cover;flex-shrink:0">`
+      ? thumbImgHtml(it.thumb, 'width:50px;height:50px;border-radius:8px;object-fit:cover;flex-shrink:0')
       : `<div style="width:50px;height:50px;border-radius:8px;background:var(--gray-1);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">👟</div>`;
     const recv = poItemReceived(it);
     const remain = Math.max(0, (it.qty||1) - recv);
@@ -7159,6 +7455,8 @@ function filterInventory() {
 function deleteProduct(pid) {
   if (!confirm('确定删除该商品？此操作不可撤销，关联的出入库记录将保留。')) return;
   const data = loadShoesV2();
+  const gone = data.products.find(p => p.id === pid);
+  if (gone && gone.thumb && thumbIsIdb(gone.thumb)) imgDel(thumbId(gone.thumb));
   data.products = data.products.filter(p => p.id !== pid);
   saveShoesV2(data);
   renderShoesInventory();
@@ -7331,7 +7629,7 @@ function renderShoesLedger() {
             const otherFee = it.otherFee||0;
             const profit = it.profit !== undefined ? it.profit * it.qty : (it.price - (it.cost||0) - shipFee - otherFee) * it.qty;
             return `<div class="ledger-item">
-              <div style="width:32px;height:32px;border-radius:6px;flex-shrink:0;margin-right:6px">${prod && prod.thumb ? `<img src="${prod.thumb}" style="width:100%;height:100%;object-fit:cover;border-radius:6px">` : '<div style="width:100%;height:100%;background:var(--gray-1);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px">👟</div>'}</div>
+              <div style="width:32px;height:32px;border-radius:6px;flex-shrink:0;margin-right:6px">${prod && prod.thumb ? thumbImgHtml(prod.thumb, 'width:100%;height:100%;object-fit:cover;border-radius:6px') : '<div style="width:100%;height:100%;background:var(--gray-1);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px">👟</div>'}</div>
               <div class="li-left">
                 <div class="li-date">${o.date}</div>
                 <div class="li-name">${name} ${size}码 × ${it.qty}</div>
@@ -7447,7 +7745,7 @@ function showProductDetail(pid) {
   ` : '';
 
   document.getElementById('detailContent').innerHTML = `
-    <div class="product-detail-img">${prod.thumb ? `<img class="zoomable" src="${prod.thumb}" style="width:100%;height:100%;object-fit:cover;border-radius:var(--radius);cursor:zoom-in">` : '👟'}</div>
+    <div class="product-detail-img">${prod.thumb ? thumbImgHtml(prod.thumb, 'width:100%;height:100%;object-fit:cover;border-radius:var(--radius);cursor:zoom-in', 'zoomable') : '👟'}</div>
     <div class="card">
       <div style="font-size:18px;font-weight:700;margin-bottom:4px">${prod.name}</div>
       <div style="font-size:13px;color:var(--gray-4);margin-bottom:12px">${prod.sku || prod.name}</div>
@@ -7785,7 +8083,7 @@ function renderShoesDefects() {
           return `<div class="defect-item">
             <div class="di-top">
               <div style="display:flex;align-items:center;gap:8px">
-                ${prod && prod.thumb ? `<img src="${prod.thumb}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0">` : `<div class="product-thumb" style="width:36px;height:36px;font-size:18px">👟</div>`}
+                ${prod && prod.thumb ? thumbImgHtml(prod.thumb, 'width:36px;height:36px;border-radius:8px;object-fit:cover;flex-shrink:0') : `<div class="product-thumb" style="width:36px;height:36px;font-size:18px">👟</div>`}
                 <div>
                   <div class="di-name">${name} ${size}</div>
                   <div style="font-size:11px;color:var(--gray-4)">${condition}</div>
@@ -8833,6 +9131,8 @@ async function manualCheckUpdate(force) {
 }
 
 // 启动 1.2s 后自动检测：发现新版就自动更新（同一个版本只自动一次，避免反复刷新）
+setTimeout(function() { try { autoMigrateThumbs(); } catch (e) {} }, 1500);
+
 setTimeout(async function() {
   cleanupOldCache();
   const ver = await checkAppUpdate();
